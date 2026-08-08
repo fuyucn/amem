@@ -155,3 +155,34 @@ Interpretation guidance: a high judge-correct with moderate ROUGE is the
 expected Amem profile — it answers *from durable units* rather than verbatim
 history. The absolute acc number should be compared against the same-model
 no-memory baseline and a per-workspace re-run before drawing conclusions.
+
+## Real-store recall eval (what matters at work)
+
+`tools/eval-recall.mjs` answers the operational question on **your own data**:
+can an agent re-locate a past unit from a natural, differently-worded query,
+and how many context tokens does that cost vs. the full store?
+
+Latest run on the live store (387 units, 80 queries, budget 1500 tok, topK 5):
+
+| Metric | Before code-symbol ranking | After | Delta |
+| ------ | -------------------------- | ----- | ----- |
+| hit@1 | 8.75% | 22.5% | +13.75 pp |
+| hit@3 | 20% | 31.25% | +11.25 pp |
+| hit@5 | 26.25% | 35.0% | +8.75 pp |
+| token savings vs full context | 98.4% | 98.2% | ≈ |
+
+The improvement: auto-extracted code-symbol units (`Module:` / `function:` /
+`class:` …) are demoted on natural-language queries, while
+procedure/decision/lesson units get a small boost
+(`AMEM_CODE_SYMBOL_PENALTY`, `AMEM_KNOWLEDGE_BOOST`). Code-flavoured queries
+(file extensions, `function`, `module`, `api` …) keep code symbols competitive.
+
+Re-run anytime:
+
+```sh
+AMEM_BASE_URL=http://127.0.0.1:8321 AMEM_API_TOKEN=<pat> \
+  node tools/eval-recall.mjs --queries 80 --budget 1500 --topK 5
+```
+
+Trend history: `docs/eval-recall-history.jsonl` · report:
+`docs/eval-recall-report.html`.

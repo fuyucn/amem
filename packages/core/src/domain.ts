@@ -389,6 +389,10 @@ export interface AmemConfig {
     workingMemoryBudget: number;
     /** default token budget for recall context assembly. */
     recallBudget: number;
+    /** demotion applied to auto-extracted code-symbol units when the query is natural language. */
+    codeSymbolPenalty: number;
+    /** boost applied to procedure/decision/lesson units when the query is natural language. */
+    knowledgeBoost: number;
     /** hard cap on active L2 scenes; beyond it new scenes merge into similar ones. */
     maxScenarios: number;
   };

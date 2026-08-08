@@ -45,6 +45,8 @@ All config is via environment variables (`configFromEnv()` in `@amem/core`). See
 | `AMEM_FORGET_THRESHOLD` | 0.3 | Below this, active units are archived |
 | `AMEM_WORKING_MEMORY_BUDGET` | 3000 | Tokens in a working-memory briefing |
 | `AMEM_RECALL_BUDGET` | 4000 | Default tokens for a recall context block |
+| `AMEM_CODE_SYMBOL_PENALTY` | 0.18 | Demotion for auto-extracted code symbols on natural-language queries |
+| `AMEM_KNOWLEDGE_BOOST` | 0.06 | Boost for procedure/decision/lesson units on natural-language queries |
 | `AMEM_JOBS_ENABLED` | true | Background consolidation scheduler |
 | `AMEM_JOBS_INTERVAL_MS` | 30000 | Scheduler tick |
 | `AMEM_JOBS_MAX_PER_HOUR` | 60 | Consolidation rate cap |

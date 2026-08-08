@@ -5,16 +5,28 @@ import type {
   RecallResult,
   Source,
   Unit,
+  UnitType,
   UnitSummary,
 } from './domain.js';
 import type { Storage } from './store.js';
 import type { Embedder } from './embedder.js';
+import { isCodeSymbolUnit } from './classify.js';
 import { cosine } from './lib/vector.js';
 import { countTokens } from './lib/tokenizer.js';
 import { isNearDuplicateOf } from './lib/recallSelect.js';
 import { recencyScore, toUnitSummary } from './lib/util.js';
 
 const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'what', 'how', 'did', 'was']);
+/** Code-flavoured queries keep code-symbol units relevant (no demotion). */
+const CODE_QUERY_RE = /\.(ts|tsx|js|jsx|py|go|rs|java|c|cpp|h|hpp|rb|php|sh|sql|json|ya?ml)\b|\b(function|class|interface|module|import|export|const|let|var|def|func|fn|type|enum|struct|impl|api|route|endpoint|schema|component|hook)\b/i;
+const KNOWLEDGE_TYPES: ReadonlySet<UnitType> = new Set([
+  'procedure',
+  'decision',
+  'lesson',
+  'plan',
+  'preference',
+  'concept',
+]);
 
 interface Scored {
   unit: Unit;
@@ -38,6 +50,22 @@ function keywordOverlap(query: string, unit: Unit): number {
   let hits = 0;
   for (const t of terms) if (haystack.includes(t)) hits++;
   return hits / terms.length;
+}
+
+/** Natural-language query => demote auto-extracted code symbols, boost knowledge units. */
+export function codeSymbolAdjustment(
+  unit: Unit,
+  query: string,
+  config: AmemConfig,
+): { delta: number; reason?: string } {
+  if (CODE_QUERY_RE.test(query)) return { delta: 0 };
+  if (isCodeSymbolUnit(unit)) {
+    return { delta: -config.thresholds.codeSymbolPenalty, reason: 'code-symbol' };
+  }
+  if (KNOWLEDGE_TYPES.has(unit.type)) {
+    return { delta: config.thresholds.knowledgeBoost, reason: 'knowledge' };
+  }
+  return { delta: 0 };
 }
 
 function buildBlock(unit: UnitSummary, body: string | undefined, sources: Source[]): string {
@@ -80,6 +108,9 @@ export async function recall(
     score += recencyScore(unit.updatedAt) * 0.1;
     score += unit.decay * 0.05;
     score += unit.importance * 0.05;
+    const adjust = codeSymbolAdjustment(unit, input.query, config);
+    score += adjust.delta;
+    if (adjust.reason) reasons.push(adjust.reason);
     scored.push({ unit, score: Math.max(0, score), reason: reasons.join(', ') || 'baseline' });
   }
   scored.sort((a, b) => b.score - a.score);

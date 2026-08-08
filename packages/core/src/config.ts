@@ -49,6 +49,8 @@ export const DEFAULT_CONFIG: AmemConfig = {
     forgetThreshold: 0.3,
     workingMemoryBudget: 3000,
     recallBudget: 4000,
+    codeSymbolPenalty: 0.18,
+    knowledgeBoost: 0.06,
     maxScenarios: 12,
   },
   jobs: {
@@ -150,6 +152,14 @@ export function configFromEnv(): AmemConfig {
         DEFAULT_CONFIG.thresholds.workingMemoryBudget,
       ),
       recallBudget: num(env('AMEM_RECALL_BUDGET'), DEFAULT_CONFIG.thresholds.recallBudget),
+      codeSymbolPenalty: num(
+        env('AMEM_CODE_SYMBOL_PENALTY'),
+        DEFAULT_CONFIG.thresholds.codeSymbolPenalty,
+      ),
+      knowledgeBoost: num(
+        env('AMEM_KNOWLEDGE_BOOST'),
+        DEFAULT_CONFIG.thresholds.knowledgeBoost,
+      ),
       maxScenarios: num(env('AMEM_MAX_SCENARIOS'), DEFAULT_CONFIG.thresholds.maxScenarios),
     },
     jobs: {

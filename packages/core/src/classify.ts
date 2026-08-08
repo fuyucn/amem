@@ -38,16 +38,22 @@ export interface ClassifiableUnit {
   labels: Record<string, string | number | boolean>;
 }
 
+/** True for auto-extracted code-symbol units (module/function/class/...). */
+export function isCodeSymbolUnit(unit: Pick<Unit, 'title' | 'labels'>): boolean {
+  const symbolKind = String(unit.labels?.symbolKind ?? '');
+  const kind = String(unit.labels?.kind ?? '');
+  if (symbolKind && CODE_SYMBOL_KINDS.has(symbolKind)) return true;
+  if (kind === 'module' || kind === 'symbol') return true;
+  if (CODE_PREFIX_RE.test(unit.title.trim())) return true;
+  return false;
+}
+
 /**
  * Deterministic offline classifier. Order matters: code symbols first, then
  * explicit unit types, then keyword signals, then the meta/other fallback.
  */
 export function classifyUnitRuleBased(unit: ClassifiableUnit): UnitCategory {
-  const symbolKind = String(unit.labels?.symbolKind ?? '');
-  const kind = String(unit.labels?.kind ?? '');
-  if (symbolKind && CODE_SYMBOL_KINDS.has(symbolKind)) return 'code';
-  if (kind === 'module' || kind === 'symbol') return 'code';
-  if (CODE_PREFIX_RE.test(unit.title.trim())) return 'code';
+  if (isCodeSymbolUnit(unit)) return 'code';
 
   switch (unit.type) {
     case 'procedure':

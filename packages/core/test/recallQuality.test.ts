@@ -145,3 +145,96 @@ describe('recall quality: pending demotion', () => {
     expect(out.items[0]!.unit.id).toBe('u_reviewed');
   });
 });
+
+describe('recall quality: code-symbol vs knowledge ranking', () => {
+  it('demotes auto-extracted code symbols for a natural-language query', async () => {
+    const storage = new FakeStorage();
+    const codeSymbol: Unit = makeUnit({
+      id: 'u_code',
+      title: 'Module: layeredRecall.ts',
+      summary: 'export function queryTerms',
+      labels: { kind: 'module', lang: 'ts' },
+      embedding: embedVec('layered recall module query terms'),
+      status: 'reviewed',
+    });
+    const knowledge: Unit = makeUnit({
+      id: 'u_know',
+      title: 'Deploy amem via docker',
+      summary: 'docker compose up -d and set AMEM_API_TOKEN',
+      type: 'procedure',
+      embedding: embedVec('deploy amem via docker compose'),
+      status: 'reviewed',
+    });
+    await storage.createUnit(codeSymbol);
+    await storage.createUnit(knowledge);
+
+    const out = await recall(storage, embed, cfg(), {
+      query: 'how do I deploy amem with docker',
+      tokenBudget: 4000,
+      topK: 10,
+    });
+
+    expect(out.items.map((i) => i.unit.id)).toContain('u_know');
+    const codeItem = out.items.find((i) => i.unit.id === 'u_code')!;
+    expect(codeItem.reason).toContain('code-symbol');
+    expect(codeItem.score).toBeLessThan(
+      out.items.find((i) => i.unit.id === 'u_know')!.score,
+    );
+  });
+
+  it('keeps code-symbol units competitive for a code-flavoured query', async () => {
+    const storage = new FakeStorage();
+    const codeSymbol: Unit = makeUnit({
+      id: 'u_code',
+      title: 'Module: layeredRecall.ts',
+      summary: 'export function queryTerms(query: string): string[]',
+      labels: { kind: 'module', lang: 'ts' },
+      embedding: embedVec('layeredRecall queryTerms function'),
+      status: 'reviewed',
+    });
+    await storage.createUnit(codeSymbol);
+
+    const out = await recall(storage, embed, cfg(), {
+      query: 'where is the queryTerms function in layeredRecall.ts',
+      tokenBudget: 4000,
+      topK: 10,
+    });
+
+    expect(out.items[0]!.unit.id).toBe('u_code');
+    expect(out.items[0]!.reason).not.toContain('code-symbol');
+  });
+
+  it('layeredRecall applies the same knowledge boost', async () => {
+    const storage = new FakeStorage();
+    await storage.createUnit(
+      makeUnit({
+        id: 'u_code',
+        title: 'function: handleRecall',
+        labels: { kind: 'symbol', symbolKind: 'function' },
+        embedding: embedVec('handle recall function'),
+        status: 'reviewed',
+      }),
+    );
+    await storage.createUnit(
+      makeUnit({
+        id: 'u_proc',
+        title: 'Rotate the PAT when hooks stop writing',
+        type: 'procedure',
+        embedding: embedVec('rotate personal access token when hooks stop'),
+        status: 'reviewed',
+      }),
+    );
+
+    const out = await layeredRecall(storage, embed, cfg(), {
+      query: 'my codex hooks stopped writing, how do I rotate the token',
+      tokenBudget: 4000,
+      topK: 10,
+    });
+
+    const proc = out.units.find((i) => i.unit.id === 'u_proc')!;
+    const code = out.units.find((i) => i.unit.id === 'u_code')!;
+    expect(proc.reason).toContain('knowledge');
+    expect(code.reason).toContain('code-symbol');
+    expect(proc.score).toBeGreaterThan(code.score);
+  });
+});

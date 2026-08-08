@@ -40,12 +40,12 @@
 
   <h2>Live status</h2>
   <div class="cards">
-    <div class="card"><b>380</b><span>knowledge units (all classified)</span></div>
-    <div class="card"><b class="good">176</b><span>tests passing (5 packages)</span></div>
+    <div class="card"><b>387</b><span>knowledge units (all classified)</span></div>
+    <div class="card"><b class="good">179</b><span>tests passing (5 packages)</span></div>
     <div class="card"><b>22.34%</b><span>LoCoMo acc (OmniMemEval)</span></div>
     <div class="card"><b>13,466</b><span>LoCoMo ctx tokens / query</span></div>
-    <div class="card"><b class="good">98.3%</b><span>real-store token saved vs full-context</span></div>
-    <div class="card"><b>27.0%</b><span>real-store hit@3</span></div>
+    <div class="card"><b class="good">98.2%</b><span>real-store token saved vs full-context</span></div>
+    <div class="card"><b>31.3%</b><span>real-store hit@3</span></div>
   </div>
 
   <h2>Why Amem exists</h2>
@@ -68,26 +68,26 @@
   <table>
     <thead><tr><th>Package</th><th>Tests</th><th>Coverage area</th></tr></thead>
     <tbody>
-      <tr><td><code>@amem/core</code></td><td>92</td><td>recall, dedup, layers, scenes, skills, importer, <b>classification</b>, codegraph</td></tr>
+      <tr><td><code>@amem/core</code></td><td>95</td><td>recall, dedup, layers, scenes, skills, importer, <b>classification</b>, codegraph</td></tr>
       <tr><td><code>@amem/server</code></td><td>51</td><td>REST lifecycle, auth/OAuth, rate limit, <b>classify & batch endpoints</b></td></tr>
       <tr><td><code>@amem/mcp</code></td><td>6</td><td>MCP tool dispatch (stdio + HTTP)</td></tr>
       <tr><td><code>@amem/db</code></td><td>19</td><td>SQLite schema, migrations, workspace isolation</td></tr>
       <tr><td><code>@amem/web</code></td><td>8</td><td>UI routing + API client</td></tr>
-      <tr><td><b>Total</b></td><td><b>176</b></td><td>—</td></tr>
+      <tr><td><b>Total</b></td><td><b>179</b></td><td>—</td></tr>
     </tbody>
   </table>
 
   <h2>Closed-loop recall eval (real store)</h2>
-  <p>Measured on the live production store (380 units, sampled queries, budget 1500 tokens, top-5): does a later, differently-worded query re-locate a past unit, and what does it cost?</p>
+  <p>Measured on the live production store (387 units, sampled queries, budget 1500 tokens, top-5): does a later, differently-worded query re-locate a past unit, and what does it cost?</p>
   <div class="cards">
-    <div class="card"><b>27.0%</b><span>hit@3 (relocation rate)</span></div>
-    <div class="card"><b>31.0%</b><span>hit@5</span></div>
-    <div class="card"><b class="good">98.3%</b><span>token saved vs full-context baseline</span></div>
-    <div class="card"><b>182</b><span>avg recall block tokens</span></div>
-    <div class="card"><b>10,880</b><span>full-context baseline tokens</span></div>
+    <div class="card"><b>31.3%</b><span>hit@3 (relocation rate)</span></div>
+    <div class="card"><b>35.0%</b><span>hit@5</span></div>
+    <div class="card"><b class="good">98.2%</b><span>token saved vs full-context baseline</span></div>
+    <div class="card"><b>199</b><span>avg recall block tokens</span></div>
+    <div class="card"><b>11,152</b><span>full-context baseline tokens</span></div>
   </div>
   <h3>Hit rate by category</h3>
-  <table><thead><tr><th>Category</th><th>Queries</th><th>hit@5</th><th>hit@3</th></tr></thead><tbody><tr><td><code>code</code></td><td>74</td><td>31.1%</td><td>25.7%</td></tr><tr><td><code>other</code></td><td>8</td><td>50.0%</td><td>50.0%</td></tr><tr><td><code>workflow</code></td><td>6</td><td>16.7%</td><td>16.7%</td></tr><tr><td><code>product</code></td><td>6</td><td>16.7%</td><td>16.7%</td></tr><tr><td><code>meta</code></td><td>5</td><td>20.0%</td><td>20.0%</td></tr><tr><td><code>research</code></td><td>1</td><td>100.0%</td><td>100.0%</td></tr></tbody></table>
+  <table><thead><tr><th>Category</th><th>Queries</th><th>hit@5</th><th>hit@3</th></tr></thead><tbody><tr><td><code>code</code></td><td>55</td><td>34.5%</td><td>30.9%</td></tr><tr><td><code>other</code></td><td>9</td><td>44.4%</td><td>33.3%</td></tr><tr><td><code>meta</code></td><td>6</td><td>16.7%</td><td>16.7%</td></tr><tr><td><code>product</code></td><td>4</td><td>50.0%</td><td>50.0%</td></tr><tr><td><code>workflow</code></td><td>3</td><td>33.3%</td><td>33.3%</td></tr><tr><td><code>research</code></td><td>2</td><td>50.0%</td><td>50.0%</td></tr><tr><td><code>personal</code></td><td>1</td><td>0.0%</td><td>0.0%</td></tr></tbody></table>
   <p class="muted">Reading: a store dominated by low-distinction code-symbol units (58% code) dilutes recall — exactly what the category console + batch archive now let you fix. Recall cost is 98% below the no-memory baseline.</p>
 
   <h2>OmniMemEval / LoCoMo (independent benchmark)</h2>
@@ -108,5 +108,5 @@ command = "npx"
 args = ["-y", "amem-mcp", "--base-url", "http://127.0.0.1:8321", "--token", "amem_pat_..."]</pre>
   <p class="muted">Full API, MCP tools, auth & workspace docs: <code>docs/API.md</code>, <code>docs/MCP_TOOLS.md</code>, <code>docs/AUTH_WORKSPACES.md</code>.</p>
 
-  <div class="foot">Generated 2026-08-08T06:07:34.864Z · Amem · self-hosted agent memory · data stays on your machine.</div>
+  <div class="foot">Generated 2026-08-08T06:22:02.512Z · Amem · self-hosted agent memory · data stays on your machine.</div>
 </div></body></html>

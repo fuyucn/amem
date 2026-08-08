@@ -21,6 +21,7 @@ import type {
 } from './domain.js';
 import type { Storage } from './store.js';
 import type { Embedder } from './embedder.js';
+import { codeSymbolAdjustment } from './recall.js';
 import { cosine } from './lib/vector.js';
 import { countTokens } from './lib/tokenizer.js';
 import { isNearDuplicateOf } from './lib/recallSelect.js';
@@ -156,6 +157,9 @@ export async function layeredRecall(
     score += recencyScore(unit.updatedAt) * 0.1;
     score += unit.decay * 0.05;
     score += unit.importance * 0.05;
+    const adjust = codeSymbolAdjustment(unit, input.query, config);
+    score += adjust.delta;
+    if (adjust.reason) reasons.push(adjust.reason);
     scored.push({ unit, score: Math.max(0, score), reason: reasons.join(', ') || 'baseline' });
   }
   scored.sort((a, b) => b.score - a.score);

@@ -18,10 +18,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build workspace packages
+        run: pnpm build
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
-      - run: pnpm build
       - run: pnpm --filter @amem/web build
 
   docker:

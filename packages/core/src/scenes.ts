@@ -33,8 +33,6 @@ export interface SceneOptions {
   maxTurnsPerScene?: number;
 }
 
-const ROLE_RE = /^(user|assistant|system|tool|human|model)\s*[:：\-–—]\s*/i;
-
 const STOP = new Set([
   'about', 'their', 'there', 'these', 'those', 'which', 'would', 'could',
   'should', 'after', 'before', 'using', 'with', 'them', 'then', 'than',

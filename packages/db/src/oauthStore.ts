@@ -1,6 +1,51 @@
 import { randomUUID } from 'node:crypto';
 import type { Database as SqliteDatabase } from 'better-sqlite3';
 
+type OAuthClientRow = {
+  client_id: string;
+  client_name: string;
+  client_secret_hash: string | null;
+  redirect_uris: string;
+  grants: string;
+  scopes: string;
+  public: number;
+  owner_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type OAuthCodeRow = {
+  code_hash: string;
+  client_id: string;
+  user_id: string;
+  scopes: string;
+  redirect_uri: string;
+  code_challenge: string;
+  code_challenge_method: string;
+  workspace_ids: string;
+  expires_at: string;
+  used_at: string | null;
+};
+type OAuthTokenRow = {
+  id: string;
+  token_hash: string;
+  client_id: string | null;
+  user_id: string;
+  type: 'access' | 'refresh';
+  scopes: string;
+  workspace_ids: string;
+  expires_at: string;
+  family_id: string;
+  used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+type LoginSessionRow = {
+  id: string;
+  user_id: string;
+  expires_at: string;
+  revoked_at: string | null;
+};
+
 export class OauthStore {
   constructor(private readonly db: SqliteDatabase) {}
 
@@ -25,7 +70,10 @@ export class OauthStore {
   }
 
   getOauthClient(clientId: string) {
-    return (this.db.prepare('SELECT * FROM oauth_clients WHERE client_id = ?').get(clientId) as any) || null;
+    return (
+      (this.db.prepare('SELECT * FROM oauth_clients WHERE client_id = ?').get(clientId) as OAuthClientRow | undefined) ||
+      null
+    );
   }
 
   saveOauthCode(input: {
@@ -59,23 +107,13 @@ export class OauthStore {
   }
 
   consumeOauthCode(codeHash: string) {
-    const row = this.db.prepare('SELECT * FROM oauth_codes WHERE code_hash = ?').get(codeHash) as any;
+    const row = this.db.prepare('SELECT * FROM oauth_codes WHERE code_hash = ?').get(codeHash) as OAuthCodeRow | undefined;
     if (!row || row.used_at) return null;
     if (Date.parse(row.expires_at) < Date.now()) return null;
     this.db
       .prepare('UPDATE oauth_codes SET used_at = ? WHERE code_hash = ?')
       .run(new Date().toISOString(), codeHash);
-    return row as {
-      client_id: string;
-      user_id: string;
-      scopes: string;
-      redirect_uri: string;
-      code_challenge: string;
-      code_challenge_method: string;
-      workspace_ids: string;
-      expires_at: string;
-      used_at: string | null;
-    };
+    return row;
   }
 
   saveOauthToken(input: {
@@ -120,42 +158,19 @@ export class OauthStore {
         : this.db
             .prepare(`SELECT * FROM oauth_tokens WHERE token_hash = ? AND revoked_at IS NULL`)
             .get(tokenHash)
-    ) as any;
+    ) as OAuthTokenRow | undefined;
     if (!row) return null;
     if (Date.parse(row.expires_at) < Date.now()) return null;
-    return row as {
-      id: string;
-      token_hash: string;
-      client_id: string | null;
-      user_id: string;
-      type: 'access' | 'refresh';
-      scopes: string;
-      workspace_ids: string;
-      expires_at: string;
-      family_id: string;
-      revoked_at: string | null;
-    };
+    return row;
   }
 
   findOauthTokenIncludingRevoked(tokenHash: string, type: 'access' | 'refresh') {
     const row = this.db
       .prepare(`SELECT * FROM oauth_tokens WHERE token_hash = ? AND type = ?`)
-      .get(tokenHash, type) as any;
+      .get(tokenHash, type) as OAuthTokenRow | undefined;
     if (!row) return null;
     if (Date.parse(row.expires_at) < Date.now()) return null;
-    return row as {
-      id: string;
-      token_hash: string;
-      client_id: string | null;
-      user_id: string;
-      type: 'access' | 'refresh';
-      scopes: string;
-      workspace_ids: string;
-      expires_at: string;
-      family_id: string;
-      used_at: string | null;
-      revoked_at: string | null;
-    };
+    return row;
   }
 
   touchOauthToken(id: string): void {
@@ -250,7 +265,7 @@ export class OauthStore {
   findLoginSession(tokenHash: string): { id: string; user_id: string } | null {
     const row = this.db
       .prepare(`SELECT id, user_id, expires_at, revoked_at FROM login_sessions WHERE token_hash = ?`)
-      .get(tokenHash) as any;
+      .get(tokenHash) as LoginSessionRow | undefined;
     if (!row || row.revoked_at) return null;
     if (Date.parse(row.expires_at) < Date.now()) return null;
     return { id: row.id, user_id: row.user_id };

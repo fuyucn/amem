@@ -129,7 +129,7 @@ async function main() {
     if (r.hit) bucket.hit += 1;
     if (r.rank !== null && r.rank <= 3) bucket.hitAt3 += 1;
   }
-  for (const [cat, b] of Object.entries(byCategory)) {
+  for (const [, b] of Object.entries(byCategory)) {
     b.hit = +(b.hit / b.total).toFixed(4);
     b.hitAt3 = +(b.hitAt3 / b.total).toFixed(4);
   }

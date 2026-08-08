@@ -197,16 +197,16 @@ export class FakeStorage implements Storage {
   }
   async snapshotAssetVersion(asset: Asset, reason: string): Promise<void> {
     const { id, ...rest } = asset;
-    const list = this.assetVersions.get(asset.id) ?? [];
+    const list = this.assetVersions.get(id) ?? [];
     list.push({
       id: `av_${list.length + 1}`,
-      assetId: asset.id,
+      assetId: id,
       version: asset.version,
       snapshot: clone(rest),
       reason,
       createdAt: new Date().toISOString(),
     });
-    this.assetVersions.set(asset.id, list);
+    this.assetVersions.set(id, list);
   }
   async createAsset(asset: Asset): Promise<void> {
     this.assets.set(asset.id, clone(asset));

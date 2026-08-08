@@ -88,7 +88,6 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
       const existing = groups.get(g) ?? { angle: hashStr(`g${g}`) * Math.PI * 2, members: 0 };
       existing.members += 1;
       groups.set(g, existing);
-      const groupCount = Math.max(1, (graph.clusters?.length ?? 0) + 6);
       const ring = 170 + g * 95;
       const memberRadius = 50 + hashStr(`${n.id}:${g}`) * 110;
       const memberAngle = hashStr(`${n.id}:${g}`) * Math.PI * 2;

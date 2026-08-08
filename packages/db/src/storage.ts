@@ -1059,7 +1059,7 @@ export class SqliteStorage implements Storage {
       )
       .run({
         id: `av_${randomUUID()}`,
-        asset_id: asset.id,
+        asset_id: id,
         workspace_id: currentWorkspaceId(),
         version: asset.version,
         snapshot: JSON.stringify(rest),

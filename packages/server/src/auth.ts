@@ -231,7 +231,7 @@ export function resolveRequestAuth(opts: {
   );
   if (allowed.length === 0) throw new AmemError('UNAUTHORIZED', 'PAT has no workspaces');
 
-  let ws = pickWorkspace(allowed, requestedSlug, headerExplicit);
+  const ws = pickWorkspace(allowed, requestedSlug, headerExplicit);
 
   const role = store.memberRole(ws.id, pat.user_id);
   if (!role) throw new AmemError('UNAUTHORIZED', 'Not a workspace member');

@@ -393,7 +393,7 @@ export function createService(
           throw new AmemError('VALIDATION', 'compact requires messages or content');
         }
         const inputTokens = countTokens(content);
-        const { trace, units, deduplicated, tokensSaved } = await runIngest({
+        const { trace, units, deduplicated } = await runIngest({
           title: `Offload ${input.sessionId ?? 'conversation'}`,
           content,
           contentType: 'text/plain',

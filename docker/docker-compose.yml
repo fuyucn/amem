@@ -1,0 +1,34 @@
+name: amem
+
+services:
+  amem:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: amem:latest
+    container_name: amem
+    restart: unless-stopped
+    ports:
+      - "8321:8321"
+    volumes:
+      # Share the same local SQLite file with Codex MCP / host tools.
+      - ../data:/data
+    environment:
+      AMEM_HOST: 0.0.0.0
+      AMEM_PORT: "8321"
+      AMEM_DB_PATH: /data/amem.db
+      # Leave empty for local single-user. Set AMEM_API_TOKEN in .env to require Bearer auth.
+      AMEM_API_TOKEN: "${AMEM_API_TOKEN:-}"
+      AMEM_MCP_OAUTH: "${AMEM_MCP_OAUTH:-1}"
+      AMEM_AUTH_ENABLED: "${AMEM_AUTH_ENABLED:-false}"
+      AMEM_BOOTSTRAP_ADMIN_EMAIL: "${AMEM_BOOTSTRAP_ADMIN_EMAIL:-admin@localhost}"
+      AMEM_BOOTSTRAP_ADMIN_PASSWORD: "${AMEM_BOOTSTRAP_ADMIN_PASSWORD:-admin}"
+      AMEM_JOBS_ENABLED: "${AMEM_JOBS_ENABLED:-true}"
+      # Auto-precipitate assets after every ingest (off | fast | auto | full).
+      AMEM_AUTO_PRECIPITATE: "${AMEM_AUTO_PRECIPITATE:-fast}"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8321/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

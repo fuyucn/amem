@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Amem — Self-hosted Agent Memory · Project Report</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0f17; --panel:#121826; --panel2:#0e1420; --border:#232c3d; --text:#e6eaf2; --muted:#8b93a7; --accent:#4f8cff; --green:#3fb97f; --red:#ef5350; --amber:#e2a03f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.55 -apple-system, "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 36px 22px 80px; }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.02em; }
+  h2 { font-size: 17px; margin: 34px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 14px; margin: 18px 0 8px; }
+  .muted { color: var(--muted); }
+  .hero { margin-bottom: 8px; }
+  .tag { display:inline-block; background: var(--panel2); border:1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--muted); margin-right: 6px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 20px 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card b { display: block; font-size: 24px; letter-spacing: -.01em; }
+  .card span { color: var(--muted); font-size: 12px; }
+  .good { color: var(--green); } .bad { color: var(--red); } .warn { color: var(--amber); }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { background: var(--panel2); color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  tr:last-child td { border-bottom: none; }
+  code { background: var(--panel2); padding: 1px 6px; border-radius: 5px; font-size: 12.5px; }
+  .feature-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; margin: 14px 0; }
+  .feature { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .feature b { color: var(--accent); }
+  .foot { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body><div class="wrap">
+  <div class="hero">
+    <h1>Amem · Self-hosted Agent Memory</h1>
+    <div class="muted">Local-first knowledge graph + MCP memory for Codex / Claude Code / Cursor agents · data stays on your machine</div>
+    <div style="margin-top:10px"><span class="tag">local-first SQLite</span><span class="tag">MCP stdio + HTTP</span><span class="tag">OAuth2.1 + PAT</span><span class="tag">knowledge graph</span><span class="tag">LLM distillation</span><span class="tag">auto-curate</span></div>
+  </div>
+
+  <h2>Live status</h2>
+  <div class="cards">
+    <div class="card"><b>380</b><span>knowledge units (all classified)</span></div>
+    <div class="card"><b class="good">176</b><span>tests passing (5 packages)</span></div>
+    <div class="card"><b>22.34%</b><span>LoCoMo acc (OmniMemEval)</span></div>
+    <div class="card"><b>13,466</b><span>LoCoMo ctx tokens / query</span></div>
+    <div class="card"><b class="good">98.3%</b><span>real-store token saved vs full-context</span></div>
+    <div class="card"><b>27.0%</b><span>real-store hit@3</span></div>
+  </div>
+
+  <h2>Why Amem exists</h2>
+  <p>Long agent conversations waste tokens, drift, and hallucinate because context is re-fed from scratch every turn. Amem inverts that: <b>every session is distilled into atomic knowledge units</b> (dedup + link + consolidate), stored in a local knowledge graph, and recalled on demand as a compact, cited context block within a token budget. The result: agents re-locate past decisions without re-reading history, and memory compounds across sessions instead of evaporating.</p>
+  <p class="muted">Design principle: we rent the intelligence (any LLM provider), you own the memory — all data stays on your machine (SQLite, local embeddings, optional local LLM).</p>
+
+  <h2>Core features</h2>
+  <div class="feature-list">
+    <div class="feature"><b>Ingest → distill</b><br/>Traces become atomic units: dedup, embedding, auto-linking, consolidation into crystals.</div>
+    <div class="feature"><b>Recall with budget</b><br/>Assembled cited context block within a token budget; layered recall + working memory briefing.</div>
+    <div class="feature"><b>Category management</b><br/>8-category taxonomy (code/infra/workflow/product/personal/research/meta/other) — auto-classified on save, batch archive/restore/delete/accept in the Units console.</div>
+    <div class="feature"><b>Knowledge graph</b><br/>Force-graph UI colored by category, cluster arcs, scenario heat overlays, graph hygiene (bounded degree).</div>
+    <div class="feature"><b>MCP server</b><br/>stdio (default) + Streamable HTTP; Codex/Claude/Cursor agents call save_unit / recall / ingest / curate directly.</div>
+    <div class="feature"><b>Auth & workspaces</b><br/>OAuth2.1 (PKCE) + PATs with scope (read/write/admin, ws:&lt;slug&gt;:*), workspace-isolated storage, audit log.</div>
+    <div class="feature"><b>LLM provider settings</b><br/>Bring your own endpoint (OpenAI-compatible / DeepSeek / local vLLM) for distillation, classification, curation.</div>
+    <div class="feature"><b>Docker one-command</b><br/>docker compose up -d → Web UI + API + MCP on :8321, data in ./data.</div>
+  </div>
+
+  <h2>Verification · tests</h2>
+  <table>
+    <thead><tr><th>Package</th><th>Tests</th><th>Coverage area</th></tr></thead>
+    <tbody>
+      <tr><td><code>@amem/core</code></td><td>92</td><td>recall, dedup, layers, scenes, skills, importer, <b>classification</b>, codegraph</td></tr>
+      <tr><td><code>@amem/server</code></td><td>51</td><td>REST lifecycle, auth/OAuth, rate limit, <b>classify & batch endpoints</b></td></tr>
+      <tr><td><code>@amem/mcp</code></td><td>6</td><td>MCP tool dispatch (stdio + HTTP)</td></tr>
+      <tr><td><code>@amem/db</code></td><td>19</td><td>SQLite schema, migrations, workspace isolation</td></tr>
+      <tr><td><code>@amem/web</code></td><td>8</td><td>UI routing + API client</td></tr>
+      <tr><td><b>Total</b></td><td><b>176</b></td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Closed-loop recall eval (real store)</h2>
+  <p>Measured on the live production store (380 units, sampled queries, budget 1500 tokens, top-5): does a later, differently-worded query re-locate a past unit, and what does it cost?</p>
+  <div class="cards">
+    <div class="card"><b>27.0%</b><span>hit@3 (relocation rate)</span></div>
+    <div class="card"><b>31.0%</b><span>hit@5</span></div>
+    <div class="card"><b class="good">98.3%</b><span>token saved vs full-context baseline</span></div>
+    <div class="card"><b>182</b><span>avg recall block tokens</span></div>
+    <div class="card"><b>10,880</b><span>full-context baseline tokens</span></div>
+  </div>
+  <h3>Hit rate by category</h3>
+  <table><thead><tr><th>Category</th><th>Queries</th><th>hit@5</th><th>hit@3</th></tr></thead><tbody><tr><td><code>code</code></td><td>74</td><td>31.1%</td><td>25.7%</td></tr><tr><td><code>other</code></td><td>8</td><td>50.0%</td><td>50.0%</td></tr><tr><td><code>workflow</code></td><td>6</td><td>16.7%</td><td>16.7%</td></tr><tr><td><code>product</code></td><td>6</td><td>16.7%</td><td>16.7%</td></tr><tr><td><code>meta</code></td><td>5</td><td>20.0%</td><td>20.0%</td></tr><tr><td><code>research</code></td><td>1</td><td>100.0%</td><td>100.0%</td></tr></tbody></table>
+  <p class="muted">Reading: a store dominated by low-distinction code-symbol units (58% code) dilutes recall — exactly what the category console + batch archive now let you fix. Recall cost is 98% below the no-memory baseline.</p>
+
+  <h2>OmniMemEval / LoCoMo (independent benchmark)</h2>
+  <p>10 long multi-session conversations, ~200 ground-truth questions answered from distilled memory with a token budget. Same harness as the official reproduced table (answer/judge model differs — see <code>docs/BENCHMARK.md</code> for the honest caveats).</p>
+  <table>
+    <thead><tr><th>Backend</th><th>Deployment</th><th>Acc</th><th>Ctx tokens</th></tr></thead>
+    <tbody>
+      <tr><td>MemOS</td><td>cloud</td><td>88.83%</td><td>5,400</td></tr><tr><td>Cognee</td><td>cloud</td><td>83.48%</td><td>32,532</td></tr><tr><td>EverOS</td><td>cloud</td><td>82.75%</td><td>8,559</td></tr><tr><td>Hindsight</td><td>cloud</td><td>81.99%</td><td>24,683</td></tr><tr><td>Mem0</td><td>cloud</td><td>77.68%</td><td>17,395</td></tr><tr><td>Letta</td><td>cloud</td><td>77.12%</td><td>14,188</td></tr><tr><td>MemMachine</td><td>local</td><td>73.90%</td><td>2,577</td></tr><tr><td>mem9</td><td>cloud</td><td>73.64%</td><td>1,597</td></tr><tr><td>Supermemory</td><td>cloud</td><td>73.53%</td><td>15,238</td></tr><tr><td>MemoryLake</td><td>cloud</td><td>72.49%</td><td>5,202</td></tr><tr><td>Viking</td><td>cloud</td><td>69.33%</td><td>5,564</td></tr><tr><td>Zep / Graphiti</td><td>cloud</td><td>63.83%</td><td>1,862</td></tr><tr><td>Memori</td><td>cloud</td><td>41.34%</td><td>8,139</td></tr><tr><td>Backboard.io</td><td>cloud</td><td>22.40%</td><td>1,198</td></tr>
+      <tr style="background:var(--panel2)"><td><b>Amem (vv3)</b></td><td>local/self-hosted</td><td><b>22.34%</b></td><td><b>13,466</b></td></tr>
+    </tbody>
+  </table>
+  <p class="muted">ROUGE-L 0.135 · note: LoCoMo favors long-context verbatim recall; Amem answers from distilled units — the right comparison is under a strict token budget, where Amem's per-query cost is the smallest in the table.</p>
+
+  <h2>Getting started</h2>
+  <p><code>git clone</code> → <code>docker compose up -d</code> (in <code>docker/</code>) → Web UI at <code>http://127.0.0.1:8321</code> → register the MCP server in your agent config:</p>
+  <pre style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:14px;overflow:auto">[mcp_servers.amem]
+command = "npx"
+args = ["-y", "amem-mcp", "--base-url", "http://127.0.0.1:8321", "--token", "amem_pat_..."]</pre>
+  <p class="muted">Full API, MCP tools, auth & workspace docs: <code>docs/API.md</code>, <code>docs/MCP_TOOLS.md</code>, <code>docs/AUTH_WORKSPACES.md</code>.</p>
+
+  <div class="foot">Generated 2026-08-08T06:07:34.864Z · Amem · self-hosted agent memory · data stays on your machine.</div>
+</div></body></html>

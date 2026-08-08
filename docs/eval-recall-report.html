@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Amem — Real-data Recall Evaluation</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0f17; --panel:#121826; --panel2:#0e1420; --border:#232c3d; --text:#e6eaf2; --muted:#8b93a7; --accent:#4f8cff; --green:#3fb97f; --red:#ef5350; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 28px 0 10px; }
+  .muted { color: var(--muted); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 18px 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .card b { display: block; font-size: 22px; } .card span { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { background: var(--panel2); color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  code { background: var(--panel2); padding: 1px 6px; border-radius: 5px; }
+  .good { color: var(--green); } .bad { color: var(--red); }
+</style>
+</head>
+<body><div class="wrap">
+  <h1>Amem · Real-data Recall Evaluation</h1>
+  <div class="muted">Closed-loop check on the live store — 8/7/2026, 11:03:55 PM</div>
+  <div class="cards">
+    <div class="card"><b>380</b><span>active units evaluated</span></div>
+    <div class="card"><b class="bad">27.0%</b><span>hit@3 re-location rate</span></div>
+    <div class="card"><b>31.0%</b><span>hit@5</span></div>
+    <div class="card"><b class="good">98.3%</b><span>token saved vs full-context</span></div>
+    <div class="card"><b>182</b><span>avg recall block tokens</span></div>
+    <div class="card"><b>10880</b><span>full-context baseline tokens</span></div>
+  </div>
+  <h2>Hit rate by category</h2>
+  <table><thead><tr><th>Category</th><th>Queries</th><th>hit@5</th><th>hit@3</th></tr></thead><tbody><tr><td><code>code</code></td><td>74</td><td>31.1%</td><td>25.7%</td></tr><tr><td><code>other</code></td><td>8</td><td>50.0%</td><td>50.0%</td></tr><tr><td><code>workflow</code></td><td>6</td><td>16.7%</td><td>16.7%</td></tr><tr><td><code>product</code></td><td>6</td><td>16.7%</td><td>16.7%</td></tr><tr><td><code>meta</code></td><td>5</td><td>20.0%</td><td>20.0%</td></tr><tr><td><code>research</code></td><td>1</td><td>100.0%</td><td>100.0%</td></tr></tbody></table>
+  <h2>Missed queries (hard-to-find memory)</h2>
+  <table><thead><tr><th>Target unit</th><th>Query</th><th>Top-3 returned</th></tr></thead><tbody><tr><td>View readable graph<div class="muted">workflow</div></td><td class="muted">View readable graph Hard refresh 8321 page</td><td class="muted">function: parseJsonFile — importer.ts · function: inferType — distill.ts · Module: config.ts</td></tr><tr><td>Routing audit confirmed<div class="muted">other</div></td><td class="muted">Routing audit confirmed Frontend history router and backend Fast</td><td class="muted">Auth workspace MVP with PAT and storage isolation · interface: ScenarioCandidate — layers.ts · Codex Stop hook auto-ingests turns into Amem</td></tr><tr><td>Scene refresh preserves continuity; LLM-only rewrites<div class="muted">product</div></td><td class="muted">Scene refresh preserves continuity; fast/heuristic layer refresh now keeps s</td><td class="muted">function: personaFromUnits — layers.ts · Typecheck packages · Updated BENCHMARK.md</td></tr><tr><td>Add scene heat tracking to memory layer<div class="muted">product</div></td><td class="muted">Add scene heat tracking Implement scene heat tracking in the mem</td><td class="muted">function: requireRequestContext — requestContext.ts · function: relink — importer.ts · function: consolidate — consolidate.ts</td></tr><tr><td>Rebuild container and local dist<div class="muted">product</div></td><td class="muted">Rebuild container and local Rebuilt container and local dist to ensu</td><td class="muted">function: extractWiki — wiki.ts · type: AssetStatus — domain.ts · Module: lib/util.ts</td></tr><tr><td>ingest 后自动沉淀资产 (autoPrecipitate)<div class="muted">product</div></td><td class="muted">ingest 后自动沉淀资产 (autoPrecipitate) 新增 AMEM_AUTO_PRECIPITATE=fast|auto|full（</td><td class="muted">Scene refresh preserves continuity; LLM-only rewrites · function: toUnitSummary — lib/util.ts · interface: Scored — recall.ts</td></tr><tr><td>Transports stdio default for local agents and Streamable HTTP for<div class="muted">other</div></td><td class="muted">Transports stdio default for Transports: **stdio** (default, for loca</td><td class="muted">HTTP MCP auth is OAuth-first with PAT fallback · const: env — config.ts · const: num — config.ts</td></tr><tr><td>Offline default deterministic embedder no LLM configured.<div class="muted">other</div></td><td class="muted">Offline default deterministic embedder **Offline (default)**: deterministic emb</td><td class="muted">type: JobId — domain.ts · Auth workspace MVP with PAT and storage isolation · Production Healthy</td></tr></tbody></table>
+  <p class="muted" style="margin-top:24px">Run: node tools/eval-recall.mjs --queries 100 --budget 1500 --topK 5 · errors: 0</p>
+</div></body></html>

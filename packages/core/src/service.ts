@@ -537,18 +537,25 @@ export function createService(
           let semantic = 0;
           let terms: string[] = [];
           if (unit.embedding) {
-            semantic = cosine(queryVec, unit.embedding.values);
-            score += semantic * 0.7;
+            semantic = Math.max(0, cosine(queryVec, unit.embedding.values));
+            score += semantic * 0.5;
           }
           const kw = keywordScore(query, unit, opts);
           terms = kw.terms;
-          score += kw.score * 0.3;
+          score += kw.score * 0.5;
           const via: SearchResult['items'][number]['via'] =
             semantic > 0.05 && kw.score > 0 ? 'hybrid' : semantic > 0.05 ? 'semantic' : kw.score > 0 ? 'keyword' : 'hybrid';
-          return { unit, score, via, terms };
+          return { unit, score, via, terms, kwScore: kw.score };
         });
         scored.sort((a, b) => b.score - a.score);
-        const items: SearchResultItem[] = scored.slice(0, limit).map((t) => ({
+        // Keyword hits always surface before semantic-only matches so exact
+        // term matches are never drowned out by noisy semantic similarity.
+        const keywordHits = scored.filter((t) => t.kwScore > 0);
+        const semanticOnly = scored.filter((t) => t.kwScore === 0);
+        // Within keyword hits rank by keyword score first (more matched terms
+        // win) so a full title match outranks a single shared character.
+        keywordHits.sort((a, b) => b.kwScore - a.kwScore || b.score - a.score);
+        const items: SearchResultItem[] = [...keywordHits, ...semanticOnly].slice(0, limit).map((t) => ({
           unit: toUnitSummary(t.unit),
           score: t.score,
           via: t.via,

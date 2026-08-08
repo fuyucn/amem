@@ -51,6 +51,17 @@ describe('search keyword ranking', () => {
     expect(r.items[0].terms).toContain('memory');
     expect(r.items[0].terms).toContain('记');
   });
+
+  it('surfaces keyword hits before semantic-only matches even at small limits', async () => {
+    const { service } = await seededService([
+      makeUnit({ id: 'exact', title: 'Docker compose healthcheck config', summary: 'exact match', body: 'body' }),
+      makeUnit({ id: 'filler', title: 'Unrelated deploy notes', summary: 'other', body: 'body' }),
+      makeUnit({ id: 'filler2', title: 'Unrelated networking notes', summary: 'other', body: 'body' }),
+    ]);
+    const r = await service.search('healthcheck', { limit: 1 });
+    expect(r.items.map((i) => i.unit.id)).toEqual(['exact']);
+    expect(r.items[0].terms).toContain('healthcheck');
+  });
 });
 
 describe('search filters', () => {

@@ -37,6 +37,8 @@ import type {
   CompactInput,
   CompactResult,
   PrecipitateResult,
+  SearchOptions,
+  SearchResultItem,
   SearchResult,
   SeedInput,
   SeedResult,
@@ -91,18 +93,51 @@ export interface ServiceDeps {
 
 const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'what', 'how', 'did', 'was']);
 
-function keywordHits(query: string, unit: Unit): number {
-  const terms = query
+/** CJK-aware keyword terms: latin words + individual CJK chars (bigram not needed for matching). */
+function searchTerms(query: string): string[] {
+  const latin = query
     .toLowerCase()
+    .replace(/[\u4e00-\u9fff]/g, ' ')
     .split(/\s+/)
-    .filter((t) => t.length > 2 && !STOP.has(t));
-  if (terms.length === 0) return 0;
-  const haystack = [unit.title, unit.summary, ...unit.tags, unit.body.slice(0, 400)]
-    .join(' ')
-    .toLowerCase();
-  let hits = 0;
-  for (const t of terms) if (haystack.includes(t)) hits++;
-  return hits;
+    .filter((t) => t.length > 1 && !STOP.has(t));
+  const cjk = query.match(/[\u4e00-\u9fff]/g) ?? [];
+  const cjkChars = [...new Set(cjk)];
+  const terms = [...latin, ...cjkChars.map((c) => c)];
+  // Keep only terms with at least one meaningful char.
+  return terms.filter((t) => /[a-z0-9\u4e00-\u9fff]/i.test(t));
+}
+
+/**
+ * Field-weighted keyword score (title > tags > summary > body head).
+ * Returns score in 0..1 plus the terms that matched (for UI highlighting).
+ */
+function keywordScore(
+  query: string,
+  unit: Unit,
+  opts: { fullText?: boolean } = {},
+): { score: number; terms: string[] } {
+  const terms = searchTerms(query);
+  if (terms.length === 0) return { score: 0, terms: [] };
+  const hay = opts.fullText ? unit.body : unit.body.slice(0, 500);
+  const fields: Array<[string, number]> = [
+    [unit.title, 3],
+    [unit.tags.join(' '), 2],
+    [unit.summary, 1.5],
+    [hay, 1],
+  ];
+  const lower = fields.map(([text, w]) => [text.toLowerCase(), w] as const);
+  let total = 0;
+  const matched: string[] = [];
+  for (const t of terms) {
+    let fieldHits = 0;
+    for (const [text, w] of lower) if (text.includes(t)) fieldHits += w;
+    if (fieldHits > 0) {
+      total += fieldHits;
+      matched.push(t);
+    }
+  }
+  const max = terms.length * (3 + 2 + 1.5 + 1);
+  return { score: max > 0 ? total / max : 0, terms: matched };
 }
 
 /**
@@ -485,26 +520,40 @@ export function createService(
         return result;
       },
 
-      async search(query: string, opts: { limit?: number; includeBody?: boolean } = {}): Promise<SearchResult> {
+      async search(query: string, opts: SearchOptions = {}): Promise<SearchResult> {
         const limit = opts.limit ?? 10;
         const queryVec = await embed.embed(query);
         const all = await storage.allUnitsWithEmbeddings();
-        const active = all.filter((u) => u.status !== 'archived');
+        const active = all.filter((u) => {
+          if (u.status === 'archived') return false;
+          if (opts.status && u.status !== opts.status) return false;
+          if (opts.type && u.type !== opts.type) return false;
+          if (opts.category && u.labels?.category !== opts.category) return false;
+          if (opts.tag && !u.tags.includes(opts.tag)) return false;
+          return true;
+        });
         const scored = active.map((unit) => {
           let score = 0;
           let semantic = 0;
+          let terms: string[] = [];
           if (unit.embedding) {
             semantic = cosine(queryVec, unit.embedding.values);
             score += semantic * 0.7;
           }
-          const kh = keywordHits(query, unit);
-          score += kh * 0.3;
+          const kw = keywordScore(query, unit, opts);
+          terms = kw.terms;
+          score += kw.score * 0.3;
           const via: SearchResult['items'][number]['via'] =
-            semantic > 0.05 && kh > 0 ? 'hybrid' : semantic > 0.05 ? 'semantic' : kh > 0 ? 'keyword' : 'hybrid';
-          return { unit, score, via };
+            semantic > 0.05 && kw.score > 0 ? 'hybrid' : semantic > 0.05 ? 'semantic' : kw.score > 0 ? 'keyword' : 'hybrid';
+          return { unit, score, via, terms };
         });
         scored.sort((a, b) => b.score - a.score);
-        const items = scored.slice(0, limit).map((t) => ({ unit: toUnitSummary(t.unit), score: t.score, via: t.via }));
+        const items: SearchResultItem[] = scored.slice(0, limit).map((t) => ({
+          unit: toUnitSummary(t.unit),
+          score: t.score,
+          via: t.via,
+          terms: t.terms,
+        }));
         await emitActivity(
           'search',
           `Search "${query.slice(0, 80)}" → ${items.length} hit(s)`,

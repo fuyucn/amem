@@ -15,7 +15,7 @@ All request/response bodies are JSON. Errors use `{ "error": { "code", "message"
 | POST | `/ingest` | `IngestInput` `{ title, content, contentType?, sourceUri?, sessionId?, extract?, autoLink?, autoReview? }` | `IngestResult` `{ trace, units, deduplicated, tokensSavedByDedup }` |
 | POST | `/recall` | `{ query, tokenBudget?, topK?, includeBody? }` | `RecallResult` `{ query, budget, usedTokens, items[{unit,score,reason,citations}], text, grounded }` |
 | POST | `/recall/layered` | `{ query, tokenBudget?, topK?, includeBody? }` | `LayeredRecallResult` — L3 persona + L2 scenarios + L1 units, token-budgeted (see ARCHITECTURE.md) |
-| GET | `/search?q=&limit=` | – | `SearchResult` |
+| GET | `/search?q=&limit=&type=&category=&tag=&status=&fullText=` | – | `SearchResult` — keyword+semantic hybrid; optional filters `type` (`fact`/`decision`/…), `category` (label), `tag` (exact), `status` (`pending`/`reviewed`/…), `fullText=1` (match inside full body beyond title/summary/tags); each item includes matched `terms` for UI highlighting |
 | GET | `/units?type=&status=&tag=&limit=&offset=` | – | `UnitSummary[]` |
 | GET | `/units/:id` | – | `Unit` |
 | POST | `/units` | `{ unit: NewUnit }` | `Unit` |

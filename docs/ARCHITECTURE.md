@@ -41,7 +41,7 @@ Dependency direction: `server`/`mcp` → `core` + `db`; `db` → `core` (types o
 
 1. **Ingest** — raw material (a transcript, doc, or note) becomes a `Trace`; distillation extracts atomic `Unit`s (typed: fact/decision/plan/…), deduplicated against existing units by embedding similarity, stored with citations to `Source`s.
 2. **Link** — consolidation generates typed `Link` edges between related units (cross-references) and detects contradictions.
-3. **Recall** — a query is hybrid-scored (semantic + keyword + recency + importance + decay) and assembled into a compact, cited context block within a token budget.
+3. **Recall** — a query is hybrid-scored (semantic + keyword + recency + importance + decay) and assembled into a compact, cited context block within a token budget. **Search** uses the same hybrid scorer with field-weighted keyword matching (title > tags > summary > body head; CJK-character aware, optional `fullText` body scan) plus filters (`type`/`category`/`tag`/`status`), and returns the matched `terms` for UI highlighting.
 4. **Consolidate** — background, debounced job: promotes `Crystal`s (>=3 sources), applies decay/forgetting, updates importance, records a `Job` audit row.
 5. **Working memory** — a compact daily briefing of the most relevant units (attention prefetch for an agent's morning session).
 

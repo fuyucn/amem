@@ -525,9 +525,28 @@ export interface LayeredRecallResult {
   deduplicated?: number;
 }
 
+export interface SearchOptions {
+  limit?: number;
+  includeBody?: boolean;
+  type?: UnitType;
+  category?: string;
+  tag?: string;
+  status?: UnitStatus;
+  /** Match terms against the full body (slower) instead of title/summary/tags + body head. */
+  fullText?: boolean;
+}
+
+export interface SearchResultItem {
+  unit: UnitSummary;
+  score: number;
+  via: 'semantic' | 'keyword' | 'hybrid';
+  /** keyword terms that matched (for UI highlighting). */
+  terms: string[];
+}
+
 export interface SearchResult {
   query: string;
-  items: Array<{ unit: UnitSummary; score: number; via: 'semantic' | 'keyword' | 'hybrid' }>;
+  items: SearchResultItem[];
 }
 
 export interface UnitSummary {
@@ -827,7 +846,7 @@ export interface AmemService {
   compact(input: CompactInput): Promise<CompactResult>;
   recall(input: RecallInput): Promise<RecallResult>;
   recallLayered(input: RecallInput): Promise<LayeredRecallResult>;
-  search(query: string, opts?: { limit?: number; includeBody?: boolean }): Promise<SearchResult>;
+  search(query: string, opts?: SearchOptions): Promise<SearchResult>;
   saveUnit(unit: NewUnit): Promise<Unit>;
   getUnit(id: UnitId): Promise<Unit | null>;
   updateUnit(id: UnitId, patch: Partial<NewUnit>, reason?: string): Promise<Unit>;

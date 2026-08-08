@@ -377,8 +377,25 @@ export async function createServer(
         includeBody: req.body.includeBody,
       }),
     );
-    fastify.get<{ Querystring: { q: string; limit?: number } }>('/search', async (req) =>
-      service.search(req.query.q, { limit: req.query.limit }),
+    fastify.get<{
+      Querystring: {
+        q: string;
+        limit?: string;
+        type?: string;
+        category?: string;
+        tag?: string;
+        status?: string;
+        fullText?: string;
+      };
+    }>('/search', async (req) =>
+      service.search(req.query.q, {
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        type: req.query.type as never,
+        category: req.query.category,
+        tag: req.query.tag,
+        status: req.query.status as never,
+        fullText: req.query.fullText === '1' || req.query.fullText === 'true',
+      }),
     );
 
     fastify.get<{ Querystring: Record<string, string | undefined> }>('/units', async (req) =>

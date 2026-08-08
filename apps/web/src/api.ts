@@ -138,7 +138,18 @@ export const api = {
     request<RecallResult>('/recall', { method: 'POST', body: JSON.stringify(body) }),
   recallLayered: (body: { query: string; tokenBudget?: number; topK?: number }) =>
     request<LayeredRecallResult>('/recall/layered', { method: 'POST', body: JSON.stringify(body) }),
-  search: (query: string, limit = 20) => request<SearchResult>(`/search${qs({ q: query, limit })}`),
+  search: (
+    query: string,
+    f: { limit?: number; type?: string; category?: string; tag?: string; status?: string; fullText?: boolean } = {},
+  ) => request<SearchResult>(`/search${qs({
+    q: query,
+    limit: f.limit,
+    type: f.type,
+    category: f.category,
+    tag: f.tag,
+    status: f.status,
+    fullText: f.fullText ? 1 : undefined,
+  })}`),
   stats: () => request<Stats>('/stats'),
   activity: (f: { kind?: string; limit?: number } = {}) =>
     request<ActivityEvent[]>(`/activity${qs(f)}`),

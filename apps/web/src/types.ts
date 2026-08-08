@@ -32,7 +32,10 @@ export interface Graph { nodes: UnitNode[]; links: GraphLink[]; clusters?: Array
 export interface Trace { id: string; sessionId?: string; title: string; content: string; contentType: string; tokenCount: number; createdAt: string; }
 export interface ContextItem { unit: UnitSummary; score: number; reason: string; citations: Source[]; }
 export interface RecallResult { query: string; budget: number; usedTokens: number; items: ContextItem[]; text: string; grounded: boolean; }
-export interface SearchResult { query: string; items: Array<{ unit: UnitSummary; score: number; via: string }>; }
+export interface SearchResult {
+  query: string;
+  items: Array<{ unit: UnitSummary; score: number; via: string; terms: string[] }>;
+}
 export interface WorkingMemory { date: string; text: string; tokenCount: number; selected: UnitSummary[]; }
 export interface StatsCounts { units: number; unitsActive: number; crystals: number; traces: number; links: number; sources: number; sessions: number; pendingReview: number; }
 export interface Stats {

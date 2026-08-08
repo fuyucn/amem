@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an idea for Amem.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing or painful today? Be specific about your workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How should it work? Include API/UI/MCP surface if you have an idea.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds exist today?
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This fits Amem's self-local-data principle (no cloud dependency)
+        - label: I would use this in my own agent workflow

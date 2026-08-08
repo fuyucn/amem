@@ -131,3 +131,32 @@ describe('search fullText', () => {
     expect(fullItem!.score).toBeGreaterThan(0);
   });
 });
+
+describe('search pagination', () => {
+  const units: Unit[] = [
+    makeUnit({ id: 'p1', title: 'Postgres vacuum settings', summary: 'a', body: 'body' }),
+    makeUnit({ id: 'p2', title: 'Postgres index tuning', summary: 'b', body: 'body' }),
+    makeUnit({ id: 'p3', title: 'Postgres replication notes', summary: 'c', body: 'body' }),
+    makeUnit({ id: 'p4', title: 'Postgres backup strategy', summary: 'd', body: 'body' }),
+    makeUnit({ id: 'p5', title: 'Postgres extensions guide', summary: 'e', body: 'body' }),
+  ];
+
+  it('returns total and pages through results with offset', async () => {
+    const { service } = await seededService(units);
+    const page1 = await service.search('postgres', { limit: 2 });
+    expect(page1.total).toBe(5);
+    expect(page1.items).toHaveLength(2);
+    const page2 = await service.search('postgres', { limit: 2, offset: 2 });
+    expect(page2.total).toBe(5);
+    expect(page2.items).toHaveLength(2);
+    const ids = [...page1.items, ...page2.items].map((i) => i.unit.id);
+    expect(new Set(ids).size).toBe(4);
+  });
+
+  it('returns an empty page past the end without error', async () => {
+    const { service } = await seededService(units);
+    const last = await service.search('postgres', { limit: 2, offset: 10 });
+    expect(last.items).toHaveLength(0);
+    expect(last.total).toBe(5);
+  });
+});

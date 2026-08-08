@@ -140,10 +140,11 @@ export const api = {
     request<LayeredRecallResult>('/recall/layered', { method: 'POST', body: JSON.stringify(body) }),
   search: (
     query: string,
-    f: { limit?: number; type?: string; category?: string; tag?: string; status?: string; fullText?: boolean } = {},
+    f: { limit?: number; offset?: number; type?: string; category?: string; tag?: string; status?: string; fullText?: boolean } = {},
   ) => request<SearchResult>(`/search${qs({
     q: query,
     limit: f.limit,
+    offset: f.offset,
     type: f.type,
     category: f.category,
     tag: f.tag,

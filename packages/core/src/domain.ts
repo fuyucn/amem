@@ -527,6 +527,8 @@ export interface LayeredRecallResult {
 
 export interface SearchOptions {
   limit?: number;
+  /** Skip the first N ranked results (for pagination). */
+  offset?: number;
   includeBody?: boolean;
   type?: UnitType;
   category?: string;
@@ -547,6 +549,8 @@ export interface SearchResultItem {
 export interface SearchResult {
   query: string;
   items: SearchResultItem[];
+  /** Total matches before offset/limit pagination. */
+  total: number;
 }
 
 export interface UnitSummary {

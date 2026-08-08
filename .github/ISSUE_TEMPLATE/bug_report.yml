@@ -1,0 +1,55 @@
+name: Bug report
+description: Something is broken or behaves incorrectly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to fill out this bug report.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Also tell us what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `docker compose -f docker/docker-compose.yml up --build -d`
+        2. Open http://localhost:8321/search and search for "X"
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Amem version
+      description: "Commit hash or version tag (e.g. `a4febc3` / `0.1.0`)"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Deployment mode
+      options:
+        - Docker compose
+        - Local (pnpm / node)
+        - MCP (stdio)
+        - MCP (Streamable HTTP)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Server logs, browser console errors, or curl output.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Verification
+      options:
+        - label: I checked the server is healthy (`GET /api/v1/health`)
+        - label: I confirmed this is not a stale browser tab (hard refresh)

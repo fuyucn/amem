@@ -11,7 +11,7 @@ Transports: **stdio** (default, for local agents) and **Streamable HTTP** (for r
 | `ingest` | `{ title, content, contentType?, sourceUri?, sessionId?, extract?, autoLink?, autoReview? }` | `IngestResult` | Save a trace + distill atomic units (with dedup). |
 | `recall` | `{ query, tokenBudget?, topK?, includeBody? }` | `RecallResult` | Assemble a compact, cited context block for prompt injection. |
 | `recall_layered` | `{ query, tokenBudget?, topK?, includeBody? }` | `LayeredRecallResult` | L0-L3 layered recall: persona + scenario blocks first, then precise units, budget-gated (less context, more signal). |
-| `search` | `{ query, limit? }` | `SearchResult` | Hybrid keyword+semantic search. |
+| `search` | `{ query, limit?, offset? }` | `SearchResult` (includes `total`) | Hybrid keyword+semantic search; paginate with `limit`/`offset`. |
 | `save_unit` | `{ unit: NewUnit }` | `Unit` | Manually write a knowledge unit (procedures, plans, facts). |
 | `get_unit` | `{ id }` | `Unit` | Read a single unit. |
 | `update_unit` | `{ id, patch, reason? }` | `Unit` | Edit a unit (records a version). |

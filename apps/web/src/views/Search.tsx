@@ -35,6 +35,8 @@ export function Search() {
   const [recall, setRecall] = useState<RecallResult | null>(null);
   const [kw, setKw] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [moreLoading, setMoreLoading] = useState(false);
+  const PAGE = 20;
 
   const run = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,11 +52,29 @@ export function Search() {
     try {
       const [r, s] = await Promise.all([
         api.recall({ query, tokenBudget: budget }),
-        api.search(query, filter),
+        api.search(query, { ...filter, limit: PAGE }),
       ]);
       setRecall(r); setKw(s);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!kw || !query.trim() || moreLoading) return;
+    const filter = {
+      status: status || undefined,
+      type: type || undefined,
+      category: category || undefined,
+      tag: tag || undefined,
+      fullText,
+    };
+    setMoreLoading(true);
+    try {
+      const s = await api.search(query, { ...filter, limit: PAGE, offset: kw.items.length });
+      setKw({ ...s, items: [...kw.items, ...s.items] });
+    } finally {
+      setMoreLoading(false);
     }
   };
 
@@ -120,7 +140,10 @@ export function Search() {
 
       {kw && (
         <div className="panel">
-          <h3>Keyword search ({kw.items.length})</h3>
+          <div className="row">
+            <h3 style={{ margin: 0 }}>Keyword search ({kw.items.length}/{kw.total})</h3>
+            <span className="badge">{kw.items.length === kw.total ? 'all results' : `${kw.total - kw.items.length} more`}</span>
+          </div>
           <ul className="dots">
             {kw.items.map((it) => (
               <li key={it.unit.id}>
@@ -133,6 +156,11 @@ export function Search() {
               </li>
             ))}
           </ul>
+          {kw.items.length < kw.total && (
+            <button className="btn" onClick={loadMore} disabled={moreLoading} style={{ marginTop: 8 }}>
+              {moreLoading ? '…' : `Load ${Math.min(PAGE, kw.total - kw.items.length)} more`}
+            </button>
+          )}
         </div>
       )}
     </div>

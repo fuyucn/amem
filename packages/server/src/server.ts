@@ -381,6 +381,7 @@ export async function createServer(
       Querystring: {
         q: string;
         limit?: string;
+        offset?: string;
         type?: string;
         category?: string;
         tag?: string;
@@ -390,6 +391,7 @@ export async function createServer(
     }>('/search', async (req) =>
       service.search(req.query.q, {
         limit: req.query.limit ? Number(req.query.limit) : undefined,
+        offset: req.query.offset ? Number(req.query.offset) : undefined,
         type: req.query.type as never,
         category: req.query.category,
         tag: req.query.tag,

@@ -35,6 +35,7 @@ export interface RecallResult { query: string; budget: number; usedTokens: numbe
 export interface SearchResult {
   query: string;
   items: Array<{ unit: UnitSummary; score: number; via: string; terms: string[] }>;
+  total: number;
 }
 export interface WorkingMemory { date: string; text: string; tokenCount: number; selected: UnitSummary[]; }
 export interface StatsCounts { units: number; unitsActive: number; crystals: number; traces: number; links: number; sources: number; sessions: number; pendingReview: number; }

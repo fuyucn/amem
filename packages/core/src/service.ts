@@ -522,6 +522,7 @@ export function createService(
 
       async search(query: string, opts: SearchOptions = {}): Promise<SearchResult> {
         const limit = opts.limit ?? 10;
+        const offset = opts.offset ?? 0;
         const queryVec = await embed.embed(query);
         const all = await storage.allUnitsWithEmbeddings();
         const active = all.filter((u) => {
@@ -555,7 +556,8 @@ export function createService(
         // Within keyword hits rank by keyword score first (more matched terms
         // win) so a full title match outranks a single shared character.
         keywordHits.sort((a, b) => b.kwScore - a.kwScore || b.score - a.score);
-        const items: SearchResultItem[] = [...keywordHits, ...semanticOnly].slice(0, limit).map((t) => ({
+        const ranked = [...keywordHits, ...semanticOnly];
+        const items: SearchResultItem[] = ranked.slice(offset, offset + limit).map((t) => ({
           unit: toUnitSummary(t.unit),
           score: t.score,
           via: t.via,
@@ -567,11 +569,12 @@ export function createService(
           {
             query,
             limit,
+            offset,
             unitIds: items.map((i) => i.unit.id),
             unitTitles: items.map((i) => i.unit.title),
           },
         );
-        return { query, items };
+        return { query, items, total: ranked.length };
       },
 
       async saveUnit(unit: NewUnit): Promise<Unit> {

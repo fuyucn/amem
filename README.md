@@ -2,6 +2,11 @@
 
 > **Self-hosted, local-first knowledge & memory for AI agents.**
 
+[![CI](https://github.com/fuyucn/amem/actions/workflows/ci.yml/badge.svg)](https://github.com/fuyucn/amem/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](package.json)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ed?logo=docker&logoColor=white)](docker/docker-compose.yml)
+
 Amem is a single binary/container that gives your agents (Codex, Claude Code, Cursor, …) a **shared, persistent knowledge graph** — so they stop re-explaining themselves, stop hallucinating from stale context, and stop wasting tokens on duplicate memory. The LLM does the curation dirty-work (distill, cross-link, organize, keep it consistent); you browse and steer. The knowledge base snowballs.
 
 It is the open, self-hostable answer to `llm-wiki` / `obsidian-wiki` / vendor lock-in: **we provide the service, your data is yours** (local SQLite, fully exportable, OKF-compatible).
@@ -200,9 +205,14 @@ Full threat model, schema, and setup-wizard design:
 - `docs/DEVELOPMENT.md` — build, test, run
 - `docs/BENCHMARK.md` — OmniMemEval / LoCoMo results + real-store recall eval
 - `docs/TENCENTDB_REFERENCE.md` — design reference vs TencentDB memory engine
+- `docs/OPERATIONS.md` — backup / restore / upgrade / monitoring
 
 Self-contained HTML evaluation reports: `docs/bench-report-amem-v3.html`
 (LoCoMo run) and `docs/eval-recall-report.html` (real-store recall eval).
+
+Security: [`SECURITY.md`](SECURITY.md) (threat model + hardening checklist).
+Community: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) ·
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Releases: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Contributing
 

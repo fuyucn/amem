@@ -6,8 +6,9 @@ scores mean. The goal is a reproducible, honest measurement of how well Amem
 serves real agent workflows: can it recall the right knowledge, at low token
 cost, with few hallucinations?
 
-> Status: **in progress** — full run via
-> `scripts/run_locomo_eval.sh --lib amem --version amem_v3`.
+> Status: **completed** — full run via
+> `scripts/run_locomo_eval.sh --lib amem --version amem_v3`, plus a real-store
+> recall eval on the live knowledge base (see below).
 
 ## Why LoCoMo
 

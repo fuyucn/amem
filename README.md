@@ -198,6 +198,11 @@ Full threat model, schema, and setup-wizard design:
 - `docs/CODEX.md` — Codex integration + Stop hook setup
 - `docs/DEPLOYMENT.md` — Docker / compose / config reference
 - `docs/DEVELOPMENT.md` — build, test, run
+- `docs/BENCHMARK.md` — OmniMemEval / LoCoMo results + real-store recall eval
+- `docs/TENCENTDB_REFERENCE.md` — design reference vs TencentDB memory engine
+
+Self-contained HTML evaluation reports: `docs/bench-report-amem-v3.html`
+(LoCoMo run) and `docs/eval-recall-report.html` (real-store recall eval).
 
 ## Contributing
 

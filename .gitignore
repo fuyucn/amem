@@ -10,3 +10,6 @@ coverage/
 data/
 .DS_Store
 apps/web/dist
+
+# locally installed dev skills (see skills-lock.json)
+.agents/

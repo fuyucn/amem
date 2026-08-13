@@ -650,7 +650,7 @@ export function createService(
         limit?: number;
         offset?: number;
       } = {}): Promise<UnitSummary[]> {
-        const all = await storage.allUnitsWithEmbeddings();
+        const all = await storage.allUnits();
         let list = all.map(toUnitSummary);
         if (filter.type) list = list.filter((u) => u.type === filter.type);
         if (filter.status) list = list.filter((u) => u.status === filter.status);
@@ -665,7 +665,7 @@ export function createService(
       async classifyUnits(
         opts: { ids?: string[]; mode?: 'rules' | 'llm' | 'auto'; reclassify?: boolean } = {},
       ): Promise<ClassifyReport> {
-        const all = await storage.allUnitsWithEmbeddings();
+        const all = await storage.allUnits();
         const report = await classifyUnits(llm, all, opts);
         // Persist label updates; keep activity to one summary event.
         let changed = 0;
@@ -734,7 +734,7 @@ export function createService(
       },
 
       async getGraph(includeClusters = false, includeScenarios = false): Promise<Graph> {
-        const all = await storage.allUnitsWithEmbeddings();
+        const all = await storage.allUnits();
         const links = await storage.allLinks();
         const degreeMap = new Map<string, number>();
         for (const l of links) {
@@ -1329,8 +1329,13 @@ export function createService(
         const counts = await storage.counts();
         const byType = await storage.byTypeCounts();
         const perDay = await storage.perDay(14);
-        const all = await storage.allUnitsWithEmbeddings();
+        const all = await storage.allUnits();
         const links = await storage.allLinks();
+        const byCategory: Record<string, number> = {};
+        for (const u of all) {
+          const category = typeof u.labels?.category === 'string' ? u.labels.category : 'unclassified';
+          byCategory[category] = (byCategory[category] ?? 0) + 1;
+        }
         const communityCount = countCommunities(
           detectCommunities(
             all.map((u) => u.id),
@@ -1340,6 +1345,7 @@ export function createService(
         return {
           counts,
           byType,
+          byCategory,
           tokensSavedByDedup,
           recallTokensDelivered,
           tokenWasteAvoided,

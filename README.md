@@ -204,6 +204,7 @@ Full threat model, schema, and setup-wizard design:
 - `docs/DEPLOYMENT.md` — Docker / compose / config reference
 - `docs/DEVELOPMENT.md` — build, test, run
 - `docs/BENCHMARK.md` — OmniMemEval / LoCoMo results + real-store recall eval
+- `docs/storage-optimization.md` — consolidate/linkgen/storage optimizations + quantified benchmarks
 - `docs/TENCENTDB_REFERENCE.md` — design reference vs TencentDB memory engine
 - `docs/OPERATIONS.md` — backup / restore / upgrade / monitoring
 

@@ -331,6 +331,25 @@ describe('consolidate', () => {
     expect(report.linksPruned).toBe(1);
     expect((await storage.allLinks()).length).toBe(0);
   });
+
+  it('is idempotent and only writes units that changed', async () => {
+    const storage = new FakeStorage();
+    await storage.createUnit(makeUnit({ id: 'idem1', title: 'Idempotent unit' }));
+    await consolidate(storage, cfg, undefined, { skipLinks: true });
+
+    // Second pass: same-day decay is quantized to whole days and importance
+    // already matches, so nothing may be written back.
+    const written: number[] = [];
+    const original = storage.updateUnits.bind(storage);
+    storage.updateUnits = async (units) => {
+      written.push(units.length);
+      return original(units);
+    };
+    const report = await consolidate(storage, cfg, undefined, { skipLinks: true });
+    expect(written).toEqual([0]);
+    expect((await storage.getUnit('idem1'))!.importance).toBe(0);
+    expect(report.archived).toBe(0);
+  });
 });
 
 describe('working memory', () => {

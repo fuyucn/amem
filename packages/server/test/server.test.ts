@@ -108,7 +108,11 @@ describe('Amem REST API', () => {
   it('GET /stats', async () => {
     const { status, body } = await j('GET', '/api/v1/stats');
     expect(status).toBe(200);
-    expect((body as { counts: { units: number } }).counts.units).toBeGreaterThanOrEqual(1);
+    const s = body as { counts: { units: number; scenarios: number; assets: number }; byCategory: Record<string, number> };
+    expect(s.counts.units).toBeGreaterThanOrEqual(1);
+    expect(typeof s.counts.scenarios).toBe('number');
+    expect(typeof s.counts.assets).toBe('number');
+    expect(typeof s.byCategory).toBe('object');
   });
 
   it('GET /units and GET /units/:id + 404', async () => {
@@ -699,6 +703,115 @@ describe('workspaces + PAT auth', () => {
       authorization: `Bearer ${wsAToken}`,
     });
     expect(noHeader.status).toBe(200);
+  });
+});
+
+describe('open mode workspace header enforcement', () => {
+  let app: FastifyInstance;
+  let handle: ServerHandle;
+
+  beforeAll(async () => {
+    handle = await createServer(
+      testConfig({
+        authEnabled: false,
+        authSecret: 'open-secret-at-least-16-chars',
+        allowLegacyApiToken: true,
+        apiToken: undefined,
+      }),
+    );
+    app = handle.app;
+    await app.ready();
+  });
+  afterAll(async () => {
+    await handle.close();
+  });
+
+  async function j(
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    url: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) {
+    const res = await app.inject({
+      method,
+      url,
+      payload: body === undefined ? undefined : JSON.stringify(body),
+      headers: { 'content-type': 'application/json', ...headers },
+    });
+    let data: unknown = null;
+    try {
+      data = res.json();
+    } catch {
+      data = res.body;
+    }
+    return { status: res.statusCode, body: data };
+  }
+
+  it('honors an explicit workspace header even with auth disabled', async () => {
+    // bootstrap -> admin PAT on the personal workspace
+    const boot = await j('POST', '/api/v1/auth/bootstrap', {
+      email: 'open@test.local',
+      password: 'open-pass',
+      tokenName: 'open-admin',
+    });
+    expect(boot.status).toBe(200);
+    const adminToken = (boot.body as { token: string }).token;
+
+    // create a company workspace
+    const ws = await j(
+      'POST',
+      '/api/v1/workspaces',
+      { slug: 'acme', name: 'Acme Corp', kind: 'company' },
+      { authorization: `Bearer ${adminToken}` },
+    );
+    expect(ws.status).toBe(200);
+    const wsId = (ws.body as { id: string }).id;
+
+    // mint a PAT scoped only to acme
+    const pat = await j(
+      'POST',
+      '/api/v1/auth/tokens',
+      { name: 'acme-only', scopes: ['read', 'write'], workspaceIds: [wsId] },
+      { authorization: `Bearer ${adminToken}` },
+    );
+    expect(pat.status).toBe(200);
+    const acmeToken = (pat.body as { token: string }).token;
+
+    // data lands in acme when the header says so
+    const write = await j(
+      'POST',
+      '/api/v1/ingest',
+      { title: 'acme open note', content: 'Acme deploys via Argo CD in open mode.' },
+      { authorization: `Bearer ${acmeToken}`, 'x-amem-workspace': 'acme' },
+    );
+    expect(write.status).toBe(200);
+
+    // explicit header outside the PAT scope -> 403, never silent fallback
+    const denied = await j('GET', '/api/v1/units', undefined, {
+      authorization: `Bearer ${acmeToken}`,
+      'x-amem-workspace': 'personal',
+    });
+    expect(denied.status).toBe(403);
+    expect((denied.body as { error: { code: string } }).error.code).toBe('FORBIDDEN');
+
+    // nonexistent workspace with explicit header -> 403 even without a credential
+    const missing = await j('GET', '/api/v1/units', undefined, {
+      'x-amem-workspace': 'no-such-workspace',
+    });
+    expect(missing.status).toBe(403);
+
+    // no header, no credential -> anonymous default workspace still works (backward compat)
+    const open = await j('GET', '/api/v1/units');
+    expect(open.status).toBe(200);
+
+    // valid credential + authorized header still works
+    const ok = await j('GET', '/api/v1/units', undefined, {
+      authorization: `Bearer ${acmeToken}`,
+      'x-amem-workspace': 'acme',
+    });
+    expect(ok.status).toBe(200);
+    const titles = ((ok.body as Array<{ title: string }>) || []).map((u) => u.title).join(' | ');
+    expect(titles.toLowerCase()).toContain('acme');
   });
 });
 

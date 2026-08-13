@@ -1,31 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { Highlight } from '../components/Highlight';
 import type { RecallResult, SearchResult, UnitStatus, UnitType } from '../types';
 
 const CATEGORIES = ['code', 'infra', 'workflow', 'product', 'personal', 'research', 'meta', 'other'] as const;
 const TYPES: UnitType[] = ['fact', 'decision', 'plan', 'procedure', 'preference', 'concept', 'lesson', 'question'];
 const STATUSES: UnitStatus[] = ['pending', 'reviewed', 'archived', 'merged', 'flagged'];
 
-/** Wrap matched terms in <mark>. Falls back to plain text when no terms are provided. */
-function Highlight({ text, terms }: { text: string; terms: string[] }) {
-  if (!terms.length) return <>{text}</>;
-  const pattern = new RegExp(
-    `(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).sort((a, b) => b.length - a.length).join('|')})`,
-    'gi',
-  );
-  // split() with one capture group inserts matched terms at odd indices.
-  const parts = text.split(pattern);
-  return (
-    <>
-      {parts.map((p, i) =>
-        i % 2 === 1 ? <mark key={i}>{p}</mark> : <span key={i}>{p}</span>,
-      )}
-    </>
-  );
-}
-
-export function Search() {
-  const [query, setQuery] = useState('');
+export function Search({ initialQuery = '' }: { initialQuery?: string }) {
+  const [query, setQuery] = useState(initialQuery);
   const [budget, setBudget] = useState(4000);
   const [status, setStatus] = useState('');
   const [type, setType] = useState('');
@@ -38,9 +21,8 @@ export function Search() {
   const [moreLoading, setMoreLoading] = useState(false);
   const PAGE = 20;
 
-  const run = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
+  const runWith = async (q: string) => {
+    if (!q.trim()) return;
     const filter = {
       status: status || undefined,
       type: type || undefined,
@@ -51,14 +33,28 @@ export function Search() {
     setLoading(true);
     try {
       const [r, s] = await Promise.all([
-        api.recall({ query, tokenBudget: budget }),
-        api.search(query, { ...filter, limit: PAGE }),
+        api.recall({ query: q, tokenBudget: budget }),
+        api.search(q, { ...filter, limit: PAGE }),
       ]);
       setRecall(r); setKw(s);
     } finally {
       setLoading(false);
     }
   };
+
+  const run = (e: React.FormEvent) => {
+    e.preventDefault();
+    runWith(query);
+  };
+
+  // Auto-run when the sidebar global search pushes a new keyword into this page.
+  useEffect(() => {
+    if (initialQuery.trim()) {
+      setQuery(initialQuery);
+      runWith(initialQuery);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery]);
 
   const loadMore = async () => {
     if (!kw || !query.trim() || moreLoading) return;

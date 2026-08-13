@@ -19,6 +19,7 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
   const [me, setMe] = useState<Me | null>(null);
   const [email, setEmail] = useState('admin@localhost');
   const [password, setPassword] = useState('admin');
+  const [patInput, setPatInput] = useState('');
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [members, setMembers] = useState<Array<{ userId: string; email: string; name: string | null; role: string }>>([]);
@@ -126,6 +127,26 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
     void load();
   };
 
+  const usePat = async () => {
+    setError('');
+    setInfo('');
+    const token = patInput.trim();
+    if (!token) {
+      setError('Paste a PAT first.');
+      return;
+    }
+    try {
+      const m = await api.usePat(token);
+      setInfo(
+        `PAT active — ${m.user ? `signed in as ${m.user.email}` : 'anonymous'}, scopes: ${m.scopes.join(', ')}`,
+      );
+      await load();
+      onAuthChange?.();
+    } catch (e) {
+      setError(String((e as Error).message || e));
+    }
+  };
+
   const createWs = async () => {
     try {
       await api.createWorkspace({ slug: newWsSlug, name: newWsName || newWsSlug, kind: 'company' });
@@ -208,9 +229,21 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
   return (
     <div className="grid">
       <div className="panel">
-        <h2 style={{ marginTop: 0 }}>Settings · Auth & Workspaces</h2>
+        <h2 style={{ marginTop: 0 }}>Settings · administration</h2>
         <p className="muted">
-          Manage login, workspace isolation, and PATs for Codex/MCP. Active workspace header:{' '}
+          Day-to-day management: login, workspace isolation, PATs for Codex/MCP, sessions, and AI
+          providers. New to Amem? Use the{' '}
+          <a
+            href="/setup"
+            onClick={(e) => {
+              e.preventDefault();
+              window.history.pushState(null, '', '/setup');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }}
+          >
+            Setup wizard
+          </a>{' '}
+          for guided first-run onboarding. Active workspace:{' '}
           <code>{api.getWorkspace()}</code>
         </p>
         {error && <div className="err">{error}</div>}
@@ -260,6 +293,17 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%' }} />
           <button className="btn primary" style={{ marginTop: 10 }} onClick={() => void login()}>
             Login or Bootstrap
+          </button>
+          <h4 style={{ marginTop: 14 }}>Or paste a PAT (Codex / CLI style)</h4>
+          <label className="muted">PAT</label>
+          <input
+            value={patInput}
+            onChange={(e) => setPatInput(e.target.value)}
+            placeholder="amem_pat_…"
+            style={{ width: '100%' }}
+          />
+          <button className="btn" style={{ marginTop: 10 }} onClick={() => void usePat()}>
+            Use PAT
           </button>
           <p className="muted" style={{ marginTop: 8 }}>
             If no users exist, this bootstraps admin. If auth is disabled on server, APIs still work without PAT.

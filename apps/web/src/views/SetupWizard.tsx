@@ -25,6 +25,8 @@ env = { AMEM_TOKEN = "${pat}", AMEM_URL = "${baseUrl}" }
 export function SetupWizard() {
   const [step, setStep] = useState<Step>('check');
   const [me, setMe] = useState<Me | null>(null);
+  const [tokens, setTokens] = useState<Array<{ id: string; name: string }>>([]);
+  const [providers, setProviders] = useState<Array<{ id: string; name: string }>>([]);
   const [email, setEmail] = useState('admin@localhost');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('Admin');
@@ -44,6 +46,16 @@ export function SetupWizard() {
       setMe(m);
       if (m.user) setEmail(m.user.email);
       setStep(m.user ? 'workspace' : 'account');
+      try {
+        setTokens(await api.tokens());
+      } catch {
+        setTokens([]);
+      }
+      try {
+        setProviders(await api.providers());
+      } catch {
+        setProviders([]);
+      }
     } catch {
       setStep('account');
     }
@@ -112,13 +124,48 @@ export function SetupWizard() {
     }
   };
 
+  const checks: Array<{ label: string; done: boolean; detail: string }> = [
+    { label: 'Admin account', done: Boolean(me?.user), detail: me?.user ? me.user.email : 'Create or sign in' },
+    {
+      label: 'Workspace',
+      done: Boolean(me?.workspace),
+      detail: me?.workspace ? `${me.workspace.name} (${me.workspace.slug})` : 'Create a workspace',
+    },
+    { label: 'PAT for agents', done: tokens.length > 0, detail: tokens.length > 0 ? `${tokens.length} token(s) minted` : 'Mint a personal access token' },
+    { label: 'AI provider', done: providers.length > 0, detail: providers.length > 0 ? providers[0]!.name : 'Optional — add in Settings' },
+  ];
+
   return (
     <div className="grid">
       <div className="panel">
         <h2 style={{ marginTop: 0 }}>Setup wizard</h2>
         <p className="muted">
-          Guided first-run: admin account → workspace → PAT → MCP/REST configuration. Everything stays on this machine.
+          One-time guided onboarding: admin account → workspace → PAT → MCP/REST configuration.
+          Everything stays on this machine. For day-to-day administration (tokens, members, AI
+          providers, OAuth) use{' '}
+          <a
+            href="/settings"
+            onClick={(e) => {
+              e.preventDefault();
+              window.history.pushState(null, '', '/settings');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }}
+          >
+            Settings
+          </a>
+          .
         </p>
+        <div className="panel" style={{ background: 'var(--panel2)', marginTop: 10 }}>
+          <h4 style={{ marginTop: 0 }}>Setup status</h4>
+          {checks.map((c) => (
+            <div key={c.label} className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+              <span>
+                <span className={c.done ? 'okmsg' : 'muted'} style={{ margin: 0 }}>{c.done ? '✓' : '○'}</span>{' '}
+                <b>{c.label}</b> <span className="muted">— {c.detail}</span>
+              </span>
+            </div>
+          ))}
+        </div>
         {error && <div className="err">{error}</div>}
         {info && <div className="okmsg">{info}</div>}
         <div className="row" style={{ margin: '10px 0' }}>

@@ -10,6 +10,7 @@ import type {
   Asset,
   AssetId,
   AssetVersion,
+  Embedding,
   IsoDate,
   Job,
   Link,
@@ -66,6 +67,15 @@ const UPDATE_UNIT = `
   WHERE id = @id
 `;
 
+/** Narrow bulk update used by consolidation: only the fields a maintenance
+ *  pass may change. Never touches `embedding`, so batch writes from light
+ *  unit reads cannot wipe stored vectors. */
+const UPDATE_UNIT_LIGHT = `
+  UPDATE units SET
+    form = @form, status = @status, importance = @importance, decay = @decay
+  WHERE id = @id
+`;
+
 // --- Row shapes --------------------------------------------------------------
 
 interface UnitRow {
@@ -78,7 +88,7 @@ interface UnitRow {
   status: Unit['status'];
   quality: number;
   confidence: number;
-  embedding: string | null;
+  embedding: string | Buffer | null;
   created_at: string;
   updated_at: string;
   valid_from: string | null;
@@ -89,6 +99,25 @@ interface UnitRow {
   version: number;
   labels: string;
   tags: string;
+}
+
+const LIGHT_UNIT_COLUMNS = `id, type, form, title, summary, body, status, quality, confidence,
+  created_at, updated_at, valid_from, valid_to, source_count, importance, decay, version, labels, tags`;
+
+/** Compact binary embedding: raw Float32 values. ~4x smaller and much faster to
+ *  parse than the legacy JSON text format (no array allocation per number). */
+function encodeEmbedding(e: Embedding): Buffer {
+  const f32 = new Float32Array(e.values);
+  return Buffer.from(f32.buffer, f32.byteOffset, f32.byteLength);
+}
+
+function decodeEmbedding(v: string | Buffer): Embedding {
+  if (typeof v === 'string') {
+    // Legacy rows written before the BLOB format (JSON text) still parse.
+    return JSON.parse(v) as Embedding;
+  }
+  const f32 = new Float32Array(v.buffer, v.byteOffset, v.byteLength / 4);
+  return { dims: f32.length, values: Array.from(f32) };
 }
 
 interface LinkRow {
@@ -229,7 +258,7 @@ function unitToRow(unit: Unit): UnitRow {
     status: unit.status,
     quality: unit.quality,
     confidence: unit.confidence,
-    embedding: unit.embedding ? JSON.stringify(unit.embedding) : null,
+    embedding: unit.embedding ? encodeEmbedding(unit.embedding) : null,
     created_at: unit.createdAt,
     updated_at: unit.updatedAt,
     valid_from: unit.validFrom ?? null,
@@ -254,7 +283,7 @@ function rowToUnit(row: UnitRow): Unit {
     status: row.status,
     quality: row.quality,
     confidence: row.confidence,
-    embedding: row.embedding ? JSON.parse(row.embedding) : undefined,
+    embedding: row.embedding ? decodeEmbedding(row.embedding) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     validFrom: row.valid_from ?? undefined,
@@ -642,12 +671,46 @@ export class SqliteStorage implements Storage {
     return rows.map((r) => toSummary(rowToUnit(r)));
   }
 
-  /** All active (non-archived) units with their embeddings parsed. */
-  async allUnitsWithEmbeddings(): Promise<Unit[]> {
-    const rows = this.db
-      .prepare("SELECT * FROM units WHERE status != 'archived' AND workspace_id = ?")
-      .all(currentWorkspaceId()) as UnitRow[];
+  /** All active (non-archived) units with their embeddings parsed. When a
+   *  `limit` is given, returns the freshest N units — link generation only
+   *  needs a bounded candidate set, so callers avoid loading every vector. */
+  async allUnitsWithEmbeddings(limit?: number): Promise<Unit[]> {
+    const sql =
+      limit && limit > 0
+        ? "SELECT * FROM units WHERE status != 'archived' AND workspace_id = ? ORDER BY updated_at DESC LIMIT ?"
+        : "SELECT * FROM units WHERE status != 'archived' AND workspace_id = ?";
+    const params = limit && limit > 0 ? [currentWorkspaceId(), limit] : [currentWorkspaceId()];
+    const rows = this.db.prepare(sql).all(params) as UnitRow[];
     return rows.map(rowToUnit);
+  }
+
+  /** All active (non-archived) units without the (large) embedding payloads.
+   *  Use for list/graph/stats paths that never touch vectors — avoids
+   *  parsing megabytes of embedding data per request. */
+  async allUnits(): Promise<Unit[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT ${LIGHT_UNIT_COLUMNS} FROM units WHERE status != 'archived' AND workspace_id = ?`,
+      )
+      .all(currentWorkspaceId()) as Array<Omit<UnitRow, 'embedding'>>;
+    return rows.map((r) => rowToUnit({ ...r, embedding: null }));
+  }
+
+  /** Bulk update inside a single transaction (used by consolidation). */
+  async updateUnits(units: Unit[]): Promise<void> {
+    if (units.length === 0) return;
+    const stmt = this.db.prepare(UPDATE_UNIT_LIGHT);
+    this.db.transaction((list: Unit[]) => {
+      for (const unit of list) {
+        stmt.run({
+          id: unit.id,
+          form: unit.form,
+          status: unit.status,
+          importance: unit.importance,
+          decay: unit.decay,
+        });
+      }
+    })(units);
   }
 
   // --- Links ---
@@ -676,6 +739,18 @@ export class SqliteStorage implements Storage {
            created_at = excluded.created_at`,
       )
       .run(row);
+  }
+
+  /** Batch link insert inside a single transaction (used by link generation). */
+  async createLinks(links: Link[]): Promise<void> {
+    if (links.length === 0) return;
+    const stmt = this.db.prepare(
+      `INSERT INTO links (id, source_unit_id, target_unit_id, relation, reason, confidence, auto, created_at, workspace_id)
+       VALUES (@id, @source_unit_id, @target_unit_id, @relation, @reason, @confidence, @auto, @created_at, @workspace_id)`,
+    );
+    this.db.transaction((list: Link[]) => {
+      for (const link of list) stmt.run({ ...linkToRow(link), workspace_id: currentWorkspaceId() });
+    })(links);
   }
 
   async getLinksForUnit(unitId: UnitId): Promise<Link[]> {
@@ -856,6 +931,14 @@ export class SqliteStorage implements Storage {
       .prepare('SELECT DISTINCT source_id FROM unit_sources WHERE unit_id = ?')
       .all(unitId) as Array<{ source_id: string }>;
     return rows.map((r) => r.source_id);
+  }
+
+  /** Distinct source counts for every unit in one pass (avoids N+1 queries). */
+  async sourceCountsByUnit(): Promise<Map<string, number>> {
+    const rows = this.db
+      .prepare('SELECT unit_id, COUNT(DISTINCT source_id) AS c FROM unit_sources GROUP BY unit_id')
+      .all() as Array<{ unit_id: string; c: number }>;
+    return new Map(rows.map((r) => [r.unit_id, Number(r.c)]));
   }
 
   // --- Versions ---
@@ -1131,7 +1214,12 @@ export class SqliteStorage implements Storage {
       "SELECT COUNT(*) AS c FROM units WHERE status = 'pending' AND workspace_id = ?",
       ws,
     );
-    return { units, unitsActive, crystals, traces, links, sources, sessions, pendingReview };
+    const scenarios = await this.scalarCount(
+      "SELECT COUNT(*) AS c FROM scenarios WHERE workspace_id = ? AND status != 'archived'",
+      ws,
+    );
+    const assets = await this.scalarCount('SELECT COUNT(*) AS c FROM assets WHERE workspace_id = ?', ws);
+    return { units, unitsActive, crystals, traces, links, sources, sessions, pendingReview, scenarios, assets };
   }
 
   async byTypeCounts(): Promise<Partial<Record<UnitType, number>>> {

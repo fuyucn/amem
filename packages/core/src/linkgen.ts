@@ -1,4 +1,4 @@
-import type { AmemConfig, LinkRelation, Unit } from './domain.js';
+import type { AmemConfig, Link, LinkRelation, Unit } from './domain.js';
 import type { Storage } from './store.js';
 import type { Embedder } from './embedder.js';
 import { cosine } from './lib/vector.js';
@@ -41,6 +41,12 @@ interface LinkCandidate {
   reason: string;
 }
 
+export interface GenerateLinksOptions {
+  /** Pre-fetched edge set; skips a second `allLinks()` scan (consolidation
+   *  already holds one). Pass the same set you loaded before any pruning. */
+  existingLinks?: Link[];
+}
+
 /**
  * Generate typed links between similar active units with a bounded degree:
  * every unit keeps at most `thresholds.maxLinksPerUnit` of its strongest
@@ -51,15 +57,18 @@ export async function generateLinks(
   storage: Storage,
   _embed: Embedder,
   config: AmemConfig,
-): Promise<{ linksCreated: number }> {
-  const units = await storage.allUnitsWithEmbeddings();
+  opts?: GenerateLinksOptions,
+): Promise<{ linksCreated: number; created: Link[] }> {
+  // Bounded candidate set: only the freshest units are scored for links, so a
+  // large store never loads every embedding vector into memory.
+  const units = await storage.allUnitsWithEmbeddings(MAX_PAIR_UNITS);
   const active = units.filter((u) => u.status !== 'archived' && u.embedding);
   const shortlist = active.slice(0, MAX_PAIR_UNITS);
   const maxLinksPerUnit = Math.max(1, config.thresholds.maxLinksPerUnit ?? 8);
 
   // Pre-collect existing edges keyed canonically (direction-independent).
   const existingKeys = new Set<string>();
-  const allLinks = await storage.allLinks();
+  const allLinks = opts?.existingLinks ?? (await storage.allLinks());
   for (const l of allLinks) {
     existingKeys.add(pairKey(l.sourceUnitId, l.targetUnitId));
   }
@@ -131,10 +140,11 @@ export async function generateLinks(
     }
   }
 
-  const created = new Set<string>();
+  const createdKeys = new Set<string>();
+  const created: Link[] = [];
   let linksCreated = 0;
   for (const key of [...chosen.keys()].sort()) {
-    if (existingKeys.has(key) || created.has(key)) continue;
+    if (existingKeys.has(key) || createdKeys.has(key)) continue;
     const candidate = chosen.get(key);
     if (!candidate) continue;
     const { a, b, confidence, relation, reason } = candidate;
@@ -142,18 +152,19 @@ export async function generateLinks(
     // never holds both orientations of the same pair.
     const [source, target] = a.id < b.id ? [a.id, b.id] : [b.id, a.id];
     if (existingKeys.has(pairKey(source, target))) continue;
-      await storage.createLink({
-        id: newId('link'),
-        sourceUnitId: source,
-        targetUnitId: target,
-        relation,
-        reason,
-        confidence,
-        auto: true,
-        createdAt: nowIso(),
-      });
-      created.add(key);
-      linksCreated++;
+    created.push({
+      id: newId('link'),
+      sourceUnitId: source,
+      targetUnitId: target,
+      relation,
+      reason,
+      confidence,
+      auto: true,
+      createdAt: nowIso(),
+    });
+    createdKeys.add(key);
+    linksCreated++;
   }
-  return { linksCreated };
+  if (created.length > 0) await storage.createLinks(created);
+  return { linksCreated, created };
 }

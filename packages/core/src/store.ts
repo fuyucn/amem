@@ -50,11 +50,18 @@ export interface Storage {
   updateUnit(unit: Unit): Promise<void>;
   deleteUnit(id: UnitId): Promise<void>;
   listUnits(filter?: UnitFilter): Promise<UnitSummary[]>;
-  /** All active units with embeddings (used by semantic search / recall). */
-  allUnitsWithEmbeddings(): Promise<Unit[]>;
+  /** All active units with embeddings (used by semantic search / recall).
+   *  `limit` caps the row count (link generation only needs the freshest N). */
+  allUnitsWithEmbeddings(limit?: number): Promise<Unit[]>;
+  /** All active units without embeddings (list/graph/stats paths). */
+  allUnits(): Promise<Unit[]>;
+  /** Bulk update in one transaction (used by consolidation). */
+  updateUnits(units: Unit[]): Promise<void>;
 
   // --- Links (edges) ---
   createLink(link: Link): Promise<void>;
+  /** Bulk link insert in one transaction (used by link generation). */
+  createLinks(links: Link[]): Promise<void>;
   upsertLink(link: Link): Promise<void>;
   getLinksForUnit(unitId: UnitId): Promise<Link[]>;
   allLinks(): Promise<Link[]>;
@@ -75,6 +82,8 @@ export interface Storage {
   addCitation(citation: UnitSource): Promise<void>;
   getCitationsForUnit(unitId: UnitId): Promise<UnitSource[]>;
   distinctSourceIdsForUnit(unitId: UnitId): Promise<string[]>;
+  /** Distinct source counts for every unit in one query (avoids N+1). */
+  sourceCountsByUnit(): Promise<Map<string, number>>;
 
   // --- Versions (bi-temporal history) ---
   createVersion(version: Version): Promise<VersionId>;

@@ -68,11 +68,46 @@ export class FakeStorage implements Storage {
       tags: u.tags, importance: u.importance, decay: u.decay, status: u.status, updatedAt: u.updatedAt,
     }));
   }
-  async allUnitsWithEmbeddings(): Promise<Unit[]> {
-    return [...this.units.values()].map((u) => this.wrap(u));
+  async allUnitsWithEmbeddings(limit?: number): Promise<Unit[]> {
+    const list = [...this.units.values()].filter((u) => u.status !== 'archived');
+    return (limit && limit > 0 ? list.slice(0, limit) : list).map((u) => this.wrap(u));
+  }
+  async allUnits(): Promise<Unit[]> {
+    return [...this.units.values()]
+      .filter((u) => u.status !== 'archived')
+      .map((u) => {
+        const { embedding: _embedding, ...light } = this.wrap(u);
+        return light as Unit;
+      });
+  }
+  async updateUnits(units: Unit[]): Promise<void> {
+    for (const unit of units) {
+      const existing = this.units.get(unit.id);
+      if (!existing) continue;
+      this.units.set(
+        unit.id,
+        this.wrap({
+          ...existing,
+          form: unit.form,
+          status: unit.status,
+          importance: unit.importance,
+          decay: unit.decay,
+        }),
+      );
+    }
+  }
+  async sourceCountsByUnit(): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    for (const [unitId, list] of this.citations) {
+      out.set(unitId, new Set(list.map((c) => c.sourceId)).size);
+    }
+    return out;
   }
   async createLink(link: Link): Promise<void> {
     this.links.set(link.id, clone(link));
+  }
+  async createLinks(links: Link[]): Promise<void> {
+    for (const link of links) this.links.set(link.id, clone(link));
   }
   async upsertLink(link: Link): Promise<void> {
     this.links.set(link.id, clone(link));

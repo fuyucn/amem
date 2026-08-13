@@ -5,7 +5,7 @@ import type { Database as SqliteDatabase } from 'better-sqlite3';
  * Current schema version. Bump this when appending a new migration so that
  * `migrate` upgrades existing databases in place.
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS w_meta (
@@ -364,6 +364,19 @@ CREATE TABLE IF NOT EXISTS asset_versions (
 CREATE INDEX IF NOT EXISTS idx_asset_versions_asset ON asset_versions(asset_id, workspace_id, version);
 `;
 
+/** Migration 12: hot read-path indexes. Query-path scans (listUnits by
+ *  freshness, graph degree lookups, session traces, version history, reverse
+ *  citation lookups) all previously walked full tables. */
+const QUERY_INDEXES_SQL = `
+CREATE INDEX IF NOT EXISTS idx_units_workspace_status ON units(workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_units_workspace_updated ON units(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_unit_id);
+CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_unit_id);
+CREATE INDEX IF NOT EXISTS idx_traces_session ON traces(session_id);
+CREATE INDEX IF NOT EXISTS idx_versions_unit ON versions(unit_id);
+CREATE INDEX IF NOT EXISTS idx_unit_sources_source ON unit_sources(source_id);
+`;
+
 const MIGRATIONS: string[] = [
   SCHEMA_SQL,
   EVENTS_SQL,
@@ -377,6 +390,7 @@ const MIGRATIONS: string[] = [
   '-- migration 9 (asset routing) is applied imperatively below for idempotency',
   ASSET_VERSIONS_SQL,
   '-- migration 11 (scene heat) is applied imperatively below for idempotency',
+  QUERY_INDEXES_SQL,
 ];
 
 /**

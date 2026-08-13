@@ -77,6 +77,10 @@ export const api = {
   logout: () => {
     setToken('');
   },
+  usePat: async (token: string) => {
+    setToken(token);
+    return request<Me>('/me');
+  },
   workspaces: () => request<Array<{ id: string; slug: string; name: string; kind: string }>>('/workspaces'),
   createWorkspace: (body: { slug: string; name: string; kind?: 'personal' | 'company' }) =>
     request<{ id: string; slug: string; name: string; kind: string }>('/workspaces', {

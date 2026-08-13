@@ -38,9 +38,13 @@ export interface SearchResult {
   total: number;
 }
 export interface WorkingMemory { date: string; text: string; tokenCount: number; selected: UnitSummary[]; }
-export interface StatsCounts { units: number; unitsActive: number; crystals: number; traces: number; links: number; sources: number; sessions: number; pendingReview: number; }
+export interface StatsCounts {
+  units: number; unitsActive: number; crystals: number; traces: number; links: number;
+  sources: number; sessions: number; pendingReview: number; scenarios: number; assets: number;
+}
 export interface Stats {
   counts: StatsCounts; byType: Partial<Record<UnitType, number>>;
+  byCategory: Record<string, number>;
   tokensSavedByDedup: number; recallTokensDelivered: number; tokenWasteAvoided: number;
   perDay: Array<{ day: string; units: number; traces: number }>;
   graph: { nodeCount: number; linkCount: number; communityCount: number };

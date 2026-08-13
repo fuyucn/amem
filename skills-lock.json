@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "skills": {
+    "alpha-evolve": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/alpha-evolve/SKILL.md",
+      "computedHash": "af4eb95cf40fd0c29964d10c1cb7e34f453395010902ce43ebca0ef8f9f853f1"
+    },
+    "anomaly-investigation": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/anomaly-investigation/SKILL.md",
+      "computedHash": "2da5dec2897c65a711f0889c789c99fd8d5de1324a762021b16a88bd9e834b8e"
+    },
+    "blue-team": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/blue-team/SKILL.md",
+      "computedHash": "e8916bf53c4393318f88379a053df7130d0e003976af67f67a62216d9e722fcb"
+    },
+    "claim-verify": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/claim-verify/SKILL.md",
+      "computedHash": "e5fb83cb78dbfd4e0410293bdfda901c68b3209c192e6eac17c8e1ce1934010d"
+    },
+    "data-analysis": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/data-analysis/SKILL.md",
+      "computedHash": "b7803b3afac97894a2eb193ed61cb1692f3243199e4ac6f3efb323ceaf156d9c"
+    },
+    "dueling-autoresearch": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/dueling-autoresearch/SKILL.md",
+      "computedHash": "f3d53fab82748daa65ce847bd0bd080468e638ecd1c38b6ce04b3a67378dfb13"
+    },
+    "exploratory-autoresearch": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/exploratory-autoresearch/SKILL.md",
+      "computedHash": "0172be4189c4c252f824034b8d173a1e6ce6c43f9f098dca2262898975c5b3fa"
+    },
+    "hypothesis-gen": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/hypothesis-gen/SKILL.md",
+      "computedHash": "8020a36beeb4a507a82be70c4c6d44437296024aea164fb98daf54022e5957c2"
+    },
+    "karpathy": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/karpathy/SKILL.md",
+      "computedHash": "3e8e886d768b2f22ed75aec33c3f796c0ae8812c21df32abe2a320a07668bb1f"
+    },
+    "literature-search": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/literature-search/SKILL.md",
+      "computedHash": "5e908951042cfa3c905a096afc4a03ea2f71a7f43b21595df4b7354e21427e92"
+    },
+    "literature-survey": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/literature-survey/SKILL.md",
+      "computedHash": "0a41f3473b370651ba7d7e8a354d9887b806040e01f1a18be04cb944487d072e"
+    },
+    "ml-autoresearch": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/ml-autoresearch/SKILL.md",
+      "computedHash": "9d8a53b2b41319697824991b784d4668c017a2e6123fefd3ae0683197c0cdfcd"
+    },
+    "optimize-loop": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/optimize-loop/SKILL.md",
+      "computedHash": "3295ae00084d177201cfff74a3e186fb193200f28bd4c88a61b0e7f6857ac04f"
+    },
+    "plan-loop": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/plan-loop/SKILL.md",
+      "computedHash": "126cbf93cbe15ed2cd46c158e84142836298b05856e0791553561ee9618f47e2"
+    },
+    "power-analysis": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/power-analysis/SKILL.md",
+      "computedHash": "5dbc291e6719419fcdd2e2f528141cb4728726383c0101ebfc3bcdd1d046fa74"
+    },
+    "prompt-optimize": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/prompt-optimize/SKILL.md",
+      "computedHash": "eea06a3e1792a6626f18e218c7139985d75a29d5889d1b98a565ac6805038aa3"
+    },
+    "purple-team": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/purple-team/SKILL.md",
+      "computedHash": "c02f6dbea9cc4052bd18720f650ee6c3f8bdcbdd8c7eccdb039036e4cf9f7052"
+    },
+    "red-team": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/red-team/SKILL.md",
+      "computedHash": "0aaa35064e8f6974813e8ae247b25640ad453fe87ab6d183c425ddf10485fe20"
+    },
+    "research-proposal": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/research-proposal/SKILL.md",
+      "computedHash": "24d9bdcf08660fe6bd798b9c89bc41ac67857c79e8584c90f55d44ba2c2ce245"
+    },
+    "research-question": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/research-question/SKILL.md",
+      "computedHash": "3ce1dd62919db28e5146a1616d9584243f29bb25ecb57865ea7e4b935d68e8e4"
+    },
+    "scientific-figure": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/scientific-figure/SKILL.md",
+      "computedHash": "f8ca022a1ae812d25dbb3f6356350d96e5e774af4c76d8c93ab4548b51113905"
+    },
+    "scientific-writer": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/scientific-writer/SKILL.md",
+      "computedHash": "442627c7d9228f767c9812dbead34ecff2b7f97c575d522cffb2de1b44734740"
+    },
+    "swe-loop": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/swe-loop/SKILL.md",
+      "computedHash": "316b69e906959e027333937f963bec571db085bfd9114bf86cf6c549f96c422f"
+    },
+    "tabular-cleanup": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/tabular-cleanup/SKILL.md",
+      "computedHash": "bf1f0da3c3db7233cc98e0b0288446743040b3c7f12cc2010ac1494b5d0b31ee"
+    },
+    "tournament-autoresearch": {
+      "source": "gaasher/agent-loop-skills",
+      "sourceType": "github",
+      "skillPath": "loops/tournament-autoresearch/SKILL.md",
+      "computedHash": "cab61ea328f8832af9d9f091777fa798db7d83608bf69269946d436ee895875d"
+    }
+  }
+}

@@ -36,6 +36,7 @@ interface GraphNodeData {
   name: string;
   fullTitle: string;
   val: number;
+  degree: number;
   type: string;
   form: string;
   status: string;
@@ -63,12 +64,49 @@ function heatColor(heat: number): string {
   return '#8b93a7';
 }
 
+type DrawNode = GraphNodeData & { x: number; y: number };
+
+// Zoom-level label policy. Far out only cluster anchors are named; zooming in
+// first reveals important nodes (scenarios, hubs, hot memories), then everything.
+const ZOOM_ALL = 1.15;
+const ZOOM_IMPORTANT = 0.55;
+
+function nodeRadius(n: GraphNodeData): number {
+  if (n.isScenario) return Math.min(9, 4 + (n.heat ?? 0) * 0.09);
+  return Math.min(6, 2 + Math.sqrt(n.degree ?? 0) * 0.9);
+}
+
+function isImportant(n: GraphNodeData): boolean {
+  return Boolean(n.isScenario) || (n.degree ?? 0) >= 4 || (n.heat ?? 0) >= 1;
+}
+
+function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.rect(x, y, w, h);
+  }
+}
+
 export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void }) {
   const graphRef = useRef<ForceGraphMethods<NodeObject<GraphNodeData>, LinkObject<GraphNodeData, GraphLinkData>> | undefined>(undefined);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Unit | Scenario | null>(null);
+  const [zoomHint, setZoomHint] = useState(true);
+  const [zoomK, setZoomK] = useState<number | null>(null);
+
+  const labelTier = (k: number): { name: string; count: number } => {
+    const anchors = data.nodes.filter((n) => anchorIds.has(n.id));
+    if (k < ZOOM_IMPORTANT) return { name: '簇锚点', count: anchors.length };
+    if (k < ZOOM_ALL) {
+      const count = data.nodes.filter((n) => anchorIds.has(n.id) || isImportant(n)).length;
+      return { name: '热点/场景/枢纽', count };
+    }
+    return { name: '全部标题', count: data.nodes.length };
+  };
 
   const load = () => api.graph(true, true).then(setGraph).catch((e) => setError(String(e.message ?? e)));
   useEffect(() => { load(); }, []);
@@ -105,6 +143,7 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
           name: truncate(n.title),
           fullTitle: n.title,
           val: n.isScenario ? Math.min(24, 9 + (n.heat || 0) * 0.6) : Math.min(12, (n.degree || 0) * 0.6 + 2.5),
+          degree: n.degree || 0,
           type: n.type,
           form: n.form,
           status: n.status,
@@ -150,6 +189,92 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
     };
   };
 
+  // One anchor node per community (highest degree + heat), capped so far-out
+  // zoom stays readable even with dozens of clusters.
+  const anchorIds = useMemo(() => {
+    const byCommunity = new Map<string, GraphNodeData[]>();
+    for (const n of data.nodes) {
+      const key = n.communityLabel ?? '';
+      if (!key) continue;
+      const arr = byCommunity.get(key) ?? [];
+      arr.push(n);
+      byCommunity.set(key, arr);
+    }
+    const picked: GraphNodeData[] = [];
+    for (const arr of byCommunity.values()) {
+      let best: GraphNodeData | null = null;
+      let bestScore = -1;
+      for (const n of arr) {
+        const score = (n.degree ?? 0) * 2 + (n.heat ?? 0);
+        if (score > bestScore) {
+          bestScore = score;
+          best = n;
+        }
+      }
+      if (best) picked.push(best);
+    }
+    picked.sort((a, b) => ((b.degree ?? 0) + (b.heat ?? 0)) - ((a.degree ?? 0) + (a.heat ?? 0)));
+    return new Set(picked.slice(0, 14).map((n) => n.id));
+  }, [data.nodes]);
+
+  const nodeFill = (n: GraphNodeData): string => {
+    if (n.isScenario) return heatColor(n.heat ?? 0);
+    if (n.community) {
+      const c = clusterColor.get(n.community);
+      if (c) return c;
+    }
+    if (n.category && CATEGORY_COLORS[n.category]) return CATEGORY_COLORS[n.category]!;
+    return TYPE_COLORS[n.type] ?? '#9aa2b1';
+  };
+
+  const drawNode = (n: DrawNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    // force-graph passes the true d3 zoom k as globalScale. Do NOT read
+    // ctx.getTransform().a: the canvas transform is set to devicePixelRatio
+    // * k, so on Retina displays it is 2x (or 3x) the actual zoom and would
+    // shift every label tier threshold.
+    const zoom = globalScale || ctx.getTransform().a || 1;
+    const isAnchor = anchorIds.has(n.id);
+    const r = nodeRadius(n) * (isAnchor && zoom < ZOOM_IMPORTANT ? 1.25 : 1);
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+    ctx.fillStyle = nodeFill(n);
+    ctx.fill();
+    if (n.isScenario) {
+      ctx.lineWidth = 1 / globalScale;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.stroke();
+    }
+
+    const showLabel =
+      zoom >= ZOOM_ALL ||
+      (zoom >= ZOOM_IMPORTANT && (isAnchor || isImportant(n))) ||
+      (zoom < ZOOM_IMPORTANT && isAnchor);
+    if (!showLabel) return;
+
+    const label = zoom < ZOOM_IMPORTANT && isAnchor
+      ? truncate(n.communityLabel ?? n.name, 24)
+      : n.name;
+    const fontSize = (zoom < ZOOM_IMPORTANT && isAnchor ? 11.5 : 10) / globalScale;
+    const pad = 4 / globalScale;
+    ctx.font = `${zoom < ZOOM_IMPORTANT && isAnchor ? 700 : 500} ${fontSize}px Inter, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const w = ctx.measureText(label).width;
+    const y = n.y + r + 3 / globalScale;
+    roundedRect(ctx, n.x - w / 2 - pad, y - pad * 0.4, w + pad * 2, fontSize * 1.35, 3 / globalScale);
+    ctx.fillStyle = 'rgba(8,12,20,0.72)';
+    ctx.fill();
+    ctx.fillStyle = zoom < ZOOM_IMPORTANT && isAnchor ? 'rgba(255,255,255,0.98)' : 'rgba(255,255,255,0.9)';
+    ctx.fillText(label, n.x, y);
+  };
+
+  const drawPointerArea = (n: DrawNode, color: string, ctx: CanvasRenderingContext2D) => {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, nodeRadius(n) + 3, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.fill();
+  };
+
   useEffect(() => {
     if (!selectedId) { setSelected(null); return; }
     const node = data.nodes.find((n) => n.id === selectedId);
@@ -168,6 +293,11 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
           <span className="muted">· {graph?.links.length ?? 0} links</span>
           <span className="badge heat">🔥 {data.nodes.filter((n) => n.isScenario).length} scenes</span>
           {graph?.clusters?.length ? <span className="badge">{graph.clusters.length} clusters</span> : null}
+          {zoomK !== null && data.nodes.length > 0 && (
+            <span className="badge" style={{ background: 'var(--panel2)', color: 'var(--fg)' }}>
+              zoom k={zoomK.toFixed(2)} · {labelTier(zoomK).name} · labels {labelTier(zoomK).count}/{data.nodes.length}
+            </span>
+          )}
           <button className="btn" onClick={load} style={{ marginLeft: 'auto' }}>Reload</button>
         </div>
         {error && <div className="muted">Error: {error}</div>}
@@ -194,6 +324,12 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
               ))}
               <span className="muted" style={{ marginLeft: 'auto' }}>color = category (clusters / scenes override)</span>
             </div>
+            {zoomHint && (
+              <div className="muted" style={{ marginBottom: 6, fontSize: 12 }}>
+                🖱️ 滚轮缩放分级 label：缩小只显示簇 → 中距显示热点/场景/枢纽 → 放大显示全部标题
+                <button className="btn btn-xs" onClick={() => setZoomHint(false)} style={{ marginLeft: 8 }}>隐藏</button>
+              </div>
+            )}
             <div style={{ position: 'relative', height: '70vh', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
               <ForceGraph2D
                 ref={graphRef}
@@ -211,15 +347,9 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
                     n.communityLabel ? `\ncluster: ${n.communityLabel}` : '',
                   ].join('')
                 }
-                nodeColor={(n: GraphNodeData) => {
-                  if (n.isScenario) return heatColor(n.heat ?? 0);
-                  if (n.community) {
-                    const c = clusterColor.get(n.community);
-                    if (c) return c;
-                  }
-                  if (n.category && CATEGORY_COLORS[n.category]) return CATEGORY_COLORS[n.category]!;
-                  return TYPE_COLORS[n.type] ?? '#9aa2b1';
-                }}
+                nodeColor={(n: GraphNodeData) => nodeFill(n)}
+                nodeCanvasObject={(n, ctx, globalScale) => drawNode(n as DrawNode, ctx, globalScale)}
+                nodePointerAreaPaint={(n, color, ctx) => drawPointerArea(n as DrawNode, color, ctx)}
                 linkColor={(l: GraphLinkData) => linkStyle(l).color}
                 linkWidth={(l: GraphLinkData) => linkStyle(l).width}
                 onNodeClick={(n: GraphNodeData) => {
@@ -227,6 +357,7 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
                   setSelectedId(id);
                   if (!n.isScenario) onOpenUnit?.(id);
                 }}
+                onZoom={({ k }: { k: number }) => setZoomK(k)}
                 onEngineStop={() => graphRef.current?.zoomToFit(450, 70)}
               />
             </div>

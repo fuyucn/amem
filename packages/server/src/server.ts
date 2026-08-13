@@ -278,8 +278,17 @@ export async function createServer(
       (req as { amemAuth?: typeof resolved }).amemAuth = resolved;
       enterRequestContext(resolved.ctx);
     } catch (err) {
-      // Only fall open when auth is fully off (no PAT system and no legacy token).
-      if (!config.authEnabled && !config.apiToken) {
+      // Only fall open when auth is fully off (no PAT system and no legacy token)
+      // AND the request carries no credential and no explicit workspace intent.
+      // Otherwise a caller that presented a token / workspace header must get the
+      // real auth outcome (401/403) instead of silently leaking the default
+      // workspace's data.
+      const openMode = !config.authEnabled && !config.apiToken;
+      const presentedCredential = Boolean(req.headers.authorization);
+      const presentedWorkspace = Boolean(
+        req.headers['x-amem-workspace'] || req.headers['x-workspace'],
+      );
+      if (openMode && !presentedCredential && !presentedWorkspace) {
         enterRequestContext({
           workspaceId: DEFAULT_WORKSPACE_ID,
           workspaceSlug: DEFAULT_WORKSPACE_SLUG,
@@ -294,9 +303,9 @@ export async function createServer(
         const anonCtx: RequestContext = {
           workspaceId: DEFAULT_WORKSPACE_ID,
           workspaceSlug: DEFAULT_WORKSPACE_SLUG,
-          scopes: [],
+          scopes: openMode ? ['read', 'write', 'admin'] : [],
           realm: 'anonymous',
-          authEnabled: true,
+          authEnabled: !openMode,
         };
         enterRequestContext(anonCtx);
         (req as { amemAuth?: { ctx: RequestContext } }).amemAuth = { ctx: anonCtx };

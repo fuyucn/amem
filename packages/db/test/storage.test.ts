@@ -68,7 +68,12 @@ describe('SqliteStorage', () => {
     const storage = await createSqliteStorageFromPath(tmpDb('emb.db'));
     await storage.createUnit(unit({ embedding: { dims: 3, values: [0.1, 0.2, 0.3] } }));
     const all = await storage.allUnitsWithEmbeddings();
-    expect(all[0]!.embedding!.values).toEqual([0.1, 0.2, 0.3]);
+    // Storage is compact Float32 binary; compare with float32 tolerance.
+    const values = all[0]!.embedding!.values;
+    expect(values.length).toBe(3);
+    for (let i = 0; i < values.length; i++) {
+      expect(values[i]).toBeCloseTo([0.1, 0.2, 0.3][i]!, 5);
+    }
     await storage.close();
   });
 
@@ -127,11 +132,15 @@ describe('SqliteStorage', () => {
     await storage.createUnit(unit({ id: 'u2', type: 'decision', form: 'crystal' }));
     await storage.createUnit(unit({ id: 'u3', status: 'pending' }));
     await storage.createTrace({ id: 't1', title: 'T', content: 'x', contentType: 'text', tokenCount: 10, createdAt: '2026-01-02T00:00:00.000Z' });
+    await storage.createScenario({ id: 's1', title: 'S', summary: '', content: '', tags: [], sourceUnitIds: [], status: 'active', heat: 0, version: 1, createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' });
+    await storage.createAsset({ id: 'a1', kind: 'skill', name: 'Skill', description: '', content: '', body: '', trigger: '', tags: [], sourceUnitIds: [], status: 'draft', version: 1, createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' });
     const counts = await storage.counts();
     expect(counts.units).toBe(3);
     expect(counts.crystals).toBe(1);
     expect(counts.traces).toBe(1);
     expect(counts.pendingReview).toBe(1);
+    expect(counts.scenarios).toBe(1);
+    expect(counts.assets).toBe(1);
     const byType = await storage.byTypeCounts();
     expect(byType.fact).toBe(2);
     expect(byType.decision).toBe(1);

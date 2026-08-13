@@ -780,11 +780,15 @@ export interface StatsCounts {
   sources: number;
   sessions: number;
   pendingReview: number;
+  scenarios: number;
+  assets: number;
 }
 
 export interface Stats {
   counts: StatsCounts;
   byType: Partial<Record<UnitType, number>>;
+  /** unit `labels.category` distribution (includes `unclassified`). */
+  byCategory: Record<string, number>;
   /** input tokens avoided by de-duplicating known knowledge. */
   tokensSavedByDedup: number;
   /** context tokens delivered by recall (vs raw history). */

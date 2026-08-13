@@ -4,3 +4,5 @@ iter	task	phase	tests	quality	pass	note
 1	T1	qa	195/195	min5	yes	2 integration tests; gate ok after fixing 2 pre-existing long comments; max_file_loc raised to 1800 (repo norm, files pre-existing >400)
 2	T2	engineer	-	-	-	types/api wiring + flow.ts helpers + Activity/Dashboard panels + App onOpenUnit + css
 2	T2	qa	202/202	min5	yes	7 flow.test.ts unit tests; typecheck clean; gate ok; T1+T2 regression green
+2	T2	keep	202/202	min5	yes	committed 8e448e5; mcp httpBackend fixed (53336fa) after full pnpm build surfaced missing activitySummary
+3	-	keep	202/202	-	-	docker image rebuilt + container recreated; /activity/summary verified 200 w/ PAT; UI bundle served; pushed master d32b9fc..53336fa; amem-loop unit_bb0cf0c1

@@ -745,6 +745,18 @@ export interface CurateReport {
   contradictionsFlagged: number;
   archived: number;
   summary: string;
+  /** units examined by the LLM classification pass (full preset only). */
+  examined?: number;
+  /** units classified by the full-preset pass. */
+  classified?: number;
+  /** classified via deterministic rules. */
+  viaRules?: number;
+  /** classified via the LLM provider. */
+  viaLlm?: number;
+  /** units whose long bodies were compressed by refineUnits (full preset). */
+  refined?: number;
+  /** estimated tokens saved by body compression. */
+  refineTokensSaved?: number;
 }
 
 export interface ImportResult {

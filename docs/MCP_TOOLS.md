@@ -39,7 +39,7 @@ Transports: **stdio** (default, for local agents) and **Streamable HTTP** (for r
 | `import_sessions` | `{ path, format?, sessionLabel?, extract? }` | `ImportSourcesResult` | Cold-start: import Codex/Claude JSONL/JSON/TXT transcripts. |
 | `review_unit` | `{ id, action }` | `Unit \| null` | Accept/discard auto-extracted units. |
 | `forget` | `{ id, reason }` | `{}` | Remove a unit. |
-| `curate` | `{ preset? }` | `CurateReport` | Run consolidation (link, promote crystals, decay). |
+| `curate` | `{ preset? }` | `CurateReport` | Maintenance pass. `fast`: consolidation only (link, promote crystals, decay). `full`: also LLM-classify unclassified units (and compress long bodies — see `refine_units`); report includes `classified`/`examined`/`viaRules`/`viaLlm`. |
 | `stats` | `{}` | `Stats` | Counts + token savings metrics. |
 | `export` | `{}` | `ExportBundle` | Full JSON export (data sovereignty). |
 | `import` | `{ bundle }` | `ImportResult` | Restore a bundle. |

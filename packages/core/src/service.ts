@@ -1349,13 +1349,28 @@ export function createService(
       async curate(preset?: 'fast' | 'full'): Promise<CurateReport> {
         // Link generation is offline/heuristic and cheap in both presets; only
         // skip it when no embedder is available.
+        const full = preset !== 'fast';
+        let classified = 0;
+        let examined = 0;
+        let viaRules = 0;
+        let viaLlm = 0;
+        if (full) {
+          // Full maintenance pass: LLM-classify every unclassified unit first,
+          // then run the offline consolidation below. Fast is consolidation
+          // only — no LLM calls, no label churn.
+          const cls = await service.classifyUnits({});
+          classified = cls.classified;
+          examined = cls.examined;
+          viaRules = cls.viaRules;
+          viaLlm = cls.viaLlm;
+        }
         const report = await consolidate(storage, config, embed, undefined);
         await emitActivity(
           'curate',
-          `Curated (${preset ?? 'full'}): +${report.linksCreated} links, ${report.linksPruned} pruned, ${report.crystalsPromoted} crystals, ${report.archived} archived`,
-          { ...report, preset: preset ?? 'full' },
+          `Curated (${preset ?? 'full'}): +${report.linksCreated} links, ${report.linksPruned} pruned, ${report.crystalsPromoted} crystals, ${report.archived} archived, ${classified} classified`,
+          { ...report, preset: preset ?? 'full', classified, examined, viaRules, viaLlm },
         );
-        return report;
+        return { ...report, classified, examined, viaRules, viaLlm };
       },
 
       async stats(): Promise<Stats> {

@@ -312,7 +312,7 @@ export const DESCRIPTIONS: Record<ToolName, string> = {
     'Classify units into the category taxonomy (code/infra/workflow/product/personal/research/meta/other). Rule-based offline; mode=llm refines with the configured provider when available.',
   batch_units:
     'Batch manage units: archive, restore, delete, or accept a set of unit ids.',
-  curate: 'Run consolidation: link, promote crystals, and decay.',
+  curate: 'Run maintenance: fast = consolidation only (link, promote crystals, decay); full = also LLM-classify unclassified units.',
   stats: 'Counts and token-savings metrics.',
   activity:
     'Recent memory activity: newly ingested/saved knowledge and recall/search usage. Use to confirm what was written and what was used.',

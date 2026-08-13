@@ -149,6 +149,40 @@ describe('Amem REST API', () => {
     expect(kinds).toContain('recall');
   });
 
+  it('GET /api/v1/activity/summary aggregates input/output flow and accessed memory regions', async () => {
+    await j('POST', '/api/v1/ingest', {
+      title: 'Flow summary seed',
+      content: 'Decision: data flow panels should read from the summary endpoint. Procedure: ingest then recall.',
+    });
+    await j('POST', '/api/v1/recall', { query: 'data flow panels', topK: 8 });
+    const { status, body } = await j('GET', '/api/v1/activity/summary?hours=24');
+    expect(status).toBe(200);
+    const s = body as {
+      window: { events: number; hours: number };
+      input: { total: number; byKind: Record<string, number>; unitsCreated: number };
+      output: { total: number; byKind: Record<string, number>; tokensDelivered: number; budgetUsed: number; tokenSavings: number };
+      accessedUnits: Array<{ unitId: string; title: string; type: string; category: string; tags: string[]; accessCount: number; actors: string[] }>;
+      regions: { byType: Array<{ key: string; count: number }>; byCategory: Array<{ key: string; count: number }>; byTag: Array<{ key: string; count: number }> };
+      topActors: Array<{ actor: string; writes: number; reads: number }>;
+    };
+    expect(s.window.hours).toBe(24);
+    expect(s.window.events).toBeGreaterThanOrEqual(3);
+    expect(s.input.byKind.ingest).toBeGreaterThanOrEqual(1);
+    expect(s.input.unitsCreated).toBeGreaterThanOrEqual(1);
+    expect(s.output.byKind.recall).toBeGreaterThanOrEqual(1);
+    expect(s.output.tokensDelivered).toBeGreaterThan(0);
+    expect(s.output.budgetUsed).toBeGreaterThanOrEqual(s.output.tokensDelivered);
+    expect(s.accessedUnits.length).toBeGreaterThanOrEqual(1);
+    const hit = s.accessedUnits.find((u) => u.accessCount >= 1 && u.type && u.title);
+    expect(hit).toBeDefined();
+    expect(s.regions.byType.length).toBeGreaterThanOrEqual(1);
+    expect(s.regions.byCategory.length).toBeGreaterThanOrEqual(1);
+    expect(s.topActors.length).toBeGreaterThanOrEqual(1);
+    const amem = s.topActors.find((a) => a.actor === 'amem');
+    expect(amem?.writes).toBeGreaterThanOrEqual(1);
+    expect(amem?.reads).toBeGreaterThanOrEqual(1);
+  });
+
   it('POST /assets/extract/codegraph and /assets/extract/wiki are idempotent', async () => {
     await j('POST', '/api/v1/import/codebase', {
       path: fileURLToPath(new URL('..', import.meta.url)),
@@ -308,6 +342,44 @@ describe('Amem REST API', () => {
     expect(typeof b.skillsExtracted).toBe('number');
     expect(typeof b.codegraphCreated).toBe('number');
     expect(typeof b.wikiCreated).toBe('number');
+  });
+});
+
+describe('Amem REST API · activity summary on a fresh store', () => {
+  let app: FastifyInstance;
+  let handle: ServerHandle;
+
+  beforeAll(async () => {
+    handle = await createServer(testConfig());
+    app = handle.app;
+    await app.ready();
+  });
+  afterAll(async () => {
+    await handle.close();
+  });
+
+  it('GET /api/v1/activity/summary returns zeroed aggregates when there are no events', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/v1/activity/summary' });
+    expect(res.statusCode).toBe(200);
+    const s = res.json() as {
+      window: { events: number };
+      input: { total: number };
+      output: { total: number; tokensDelivered: number; budgetUsed: number; tokenSavings: number };
+      accessedUnits: unknown[];
+      regions: { byType: unknown[]; byCategory: unknown[]; byTag: unknown[] };
+      topActors: unknown[];
+    };
+    expect(s.window.events).toBe(0);
+    expect(s.input.total).toBe(0);
+    expect(s.output.total).toBe(0);
+    expect(s.output.tokensDelivered).toBe(0);
+    expect(s.output.budgetUsed).toBe(0);
+    expect(s.output.tokenSavings).toBe(0);
+    expect(s.accessedUnits).toEqual([]);
+    expect(s.regions.byType).toEqual([]);
+    expect(s.regions.byCategory).toEqual([]);
+    expect(s.regions.byTag).toEqual([]);
+    expect(s.topActors).toEqual([]);
   });
 });
 
@@ -1329,7 +1401,7 @@ describe('workspace members', () => {
       const pat = login.json().token as string;
       const headers = { authorization: `Bearer ${pat}` };
 
-      // create second user via bootstrap should fail; create via direct register? use another login after createUser through second bootstrap no.
+      // second bootstrap login is blocked; member added via workspaces API below.
       // Create company workspace and ensure owner is member.
       const ws = await app.inject({
         method: 'POST',
@@ -1348,8 +1420,7 @@ describe('workspace members', () => {
       expect(members.statusCode).toBe(200);
       expect(members.json().length).toBeGreaterThanOrEqual(1);
 
-      // create member user via temporary second server db user: use auth bootstrap is blocked; insert via login of new email after createUser API? none.
-      // Use storage-less approach: POST members with unknown email => 404
+      // unknown email via POST members => 404 (no storage side-effects)
       const missing = await app.inject({
         method: 'POST',
         url: `/api/v1/workspaces/${slug}/members`,

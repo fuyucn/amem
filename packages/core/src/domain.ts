@@ -845,6 +845,29 @@ export interface ActivityFilter {
   before?: IsoDate;
 }
 
+/** Aggregated knowledge flow over a recent window: writes in, reads out, and the memory regions agents touched. */
+export interface ActivitySummary {
+  window: { events: number; hours: number; since: IsoDate };
+  input: { total: number; byKind: Record<string, number>; unitsCreated: number };
+  output: { total: number; byKind: Record<string, number>; tokensDelivered: number; budgetUsed: number; tokenSavings: number };
+  accessedUnits: Array<{
+    unitId: string;
+    title: string;
+    type: string;
+    category: string;
+    tags: string[];
+    accessCount: number;
+    lastAccessedAt: IsoDate;
+    actors: string[];
+  }>;
+  regions: {
+    byType: Array<{ key: string; count: number }>;
+    byCategory: Array<{ key: string; count: number }>;
+    byTag: Array<{ key: string; count: number }>;
+  };
+  topActors: Array<{ actor: string; writes: number; reads: number }>;
+}
+
 // ---------------------------------------------------------------------------
 // Service + LLM contracts
 // ---------------------------------------------------------------------------
@@ -914,6 +937,7 @@ export interface AmemService {
   curate(preset?: 'fast' | 'full'): Promise<CurateReport>;
   stats(): Promise<Stats>;
   activity(filter?: ActivityFilter): Promise<ActivityEvent[]>;
+  activitySummary(filter?: { hours?: number; limit?: number }): Promise<ActivitySummary>;
   getTraces(filter?: { sessionId?: SessionId; limit?: number }): Promise<Trace[]>;
   getTrace(id: TraceId): Promise<Trace | null>;
   import(payload: ExportBundle): Promise<ImportResult>;

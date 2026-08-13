@@ -596,6 +596,12 @@ export async function createServer(
       service.curate(req.body?.preset || 'fast'),
     );
     fastify.get('/stats', async () => service.stats());
+    fastify.get<{ Querystring: { hours?: string; limit?: string } }>('/activity/summary', async (req) =>
+      service.activitySummary({
+        hours: req.query.hours ? Number(req.query.hours) : undefined,
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+      }),
+    );
     fastify.get<{ Querystring: { kind?: string; limit?: string } }>('/activity', async (req) =>
       service.activity({
         kind: req.query.kind,

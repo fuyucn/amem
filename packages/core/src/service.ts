@@ -1,6 +1,7 @@
 import type {
   ActivityEvent,
   ActivityFilter,
+  ActivitySummary,
   AmemConfig,
   AmemService,
   Asset,
@@ -92,6 +93,38 @@ export interface ServiceDeps {
 }
 
 const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'what', 'how', 'did', 'was']);
+
+/** Event kinds that add knowledge to the store (data-flow input). */
+const ACTIVITY_WRITE_KINDS = new Set([
+  'ingest',
+  'save_unit',
+  'update_unit',
+  'review',
+  'link',
+  'classify',
+  'import',
+  'import_dir',
+  'import_codebase',
+  'curate',
+  'forget',
+  'precipitate',
+  'compact',
+  'extract_skills',
+  'extract_wiki',
+  'seed',
+]);
+
+/** Event kinds that consume knowledge (data-flow output to agents). */
+const ACTIVITY_READ_KINDS = new Set(['recall', 'search', 'export', 'asset_call']);
+
+/** Event kinds whose meta.unitIds count as agents touching memory regions. */
+const ACTIVITY_ACCESS_KINDS = new Set(['recall', 'search']);
+
+function regionRows(counts: Record<string, number>): Array<{ key: string; count: number }> {
+  return Object.entries(counts)
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count);
+}
 
 /** CJK-aware keyword terms: latin words + individual CJK chars (bigram not needed for matching). */
 function searchTerms(query: string): string[] {
@@ -1356,6 +1389,96 @@ export function createService(
 
       async activity(filter: ActivityFilter = {}): Promise<ActivityEvent[]> {
         return storage.listEvents(filter);
+      },
+
+      async activitySummary(filter: { hours?: number; limit?: number } = {}): Promise<ActivitySummary> {
+        const hours = filter.hours && filter.hours > 0 ? filter.hours : 24;
+        const limit = filter.limit && filter.limit > 0 ? Math.min(filter.limit, 500) : 500;
+        const events = await storage.listEvents({ limit });
+        const sinceMs = Date.now() - hours * 3600_000;
+        const windowEvents = events.filter((e) => new Date(e.createdAt).getTime() >= sinceMs);
+
+        const inputByKind: Record<string, number> = {};
+        const outputByKind: Record<string, number> = {};
+        const access = new Map<string, { count: number; last: number; actors: Set<string> }>();
+        const actorStat = new Map<string, { writes: number; reads: number }>();
+        let unitsCreated = 0;
+        let tokensDelivered = 0;
+        let budgetUsed = 0;
+        let tokenSavings = 0;
+
+        for (const ev of windowEvents) {
+          const kind = ev.kind;
+          const actor = ev.actor || 'amem';
+          const stat = actorStat.get(actor) ?? { writes: 0, reads: 0 };
+          if (ACTIVITY_WRITE_KINDS.has(kind)) {
+            inputByKind[kind] = (inputByKind[kind] ?? 0) + 1;
+            stat.writes += 1;
+            if (kind === 'ingest' && Array.isArray(ev.meta?.unitIds)) unitsCreated += ev.meta.unitIds.length;
+          } else if (ACTIVITY_READ_KINDS.has(kind)) {
+            outputByKind[kind] = (outputByKind[kind] ?? 0) + 1;
+            stat.reads += 1;
+            const used = ev.meta?.usedTokens;
+            const budget = ev.meta?.budget;
+            if (typeof used === 'number') tokensDelivered += used;
+            if (typeof budget === 'number') budgetUsed += budget;
+            if (typeof used === 'number' && typeof budget === 'number') tokenSavings += Math.max(0, budget - used);
+          }
+          actorStat.set(actor, stat);
+
+          if (ACTIVITY_ACCESS_KINDS.has(kind) && Array.isArray(ev.meta?.unitIds)) {
+            const accessedAt = new Date(ev.createdAt).getTime();
+            for (const unitId of ev.meta.unitIds) {
+              if (typeof unitId !== 'string') continue;
+              const hit = access.get(unitId) ?? { count: 0, last: 0, actors: new Set<string>() };
+              hit.count += 1;
+              if (accessedAt > hit.last) hit.last = accessedAt;
+              hit.actors.add(actor);
+              access.set(unitId, hit);
+            }
+          }
+        }
+
+        const accessedUnits: ActivitySummary['accessedUnits'] = [];
+        for (const [unitId, hit] of [...access.entries()].sort(
+          (a, b) => b[1].count - a[1].count || b[1].last - a[1].last,
+        ).slice(0, 10)) {
+          const unit = await storage.getUnit(unitId);
+          const category = typeof unit?.labels?.category === 'string' ? unit.labels.category : 'unclassified';
+          accessedUnits.push({
+            unitId,
+            title: unit?.title ?? '(deleted unit)',
+            type: unit?.type ?? 'unknown',
+            category,
+            tags: unit?.tags ?? [],
+            accessCount: hit.count,
+            lastAccessedAt: new Date(hit.last).toISOString(),
+            actors: [...hit.actors],
+          });
+        }
+
+        const byType: Record<string, number> = {};
+        const byCategory: Record<string, number> = {};
+        const byTag: Record<string, number> = {};
+        for (const u of accessedUnits) {
+          byType[u.type] = (byType[u.type] ?? 0) + 1;
+          byCategory[u.category] = (byCategory[u.category] ?? 0) + 1;
+          for (const tag of u.tags) byTag[tag] = (byTag[tag] ?? 0) + 1;
+        }
+
+        const topActors = [...actorStat.entries()]
+          .map(([actor, s]) => ({ actor, writes: s.writes, reads: s.reads }))
+          .sort((a, b) => b.writes + b.reads - (a.writes + a.reads))
+          .slice(0, 10);
+
+        return {
+          window: { events: windowEvents.length, hours, since: new Date(sinceMs).toISOString() },
+          input: { total: windowEvents.filter((e) => ACTIVITY_WRITE_KINDS.has(e.kind)).length, byKind: inputByKind, unitsCreated },
+          output: { total: windowEvents.filter((e) => ACTIVITY_READ_KINDS.has(e.kind)).length, byKind: outputByKind, tokensDelivered, budgetUsed, tokenSavings },
+          accessedUnits,
+          regions: { byType: regionRows(byType), byCategory: regionRows(byCategory), byTag: regionRows(byTag) },
+          topActors,
+        };
       },
 
       async getTraces(filter?: { sessionId?: string; limit?: number }): Promise<Trace[]> {

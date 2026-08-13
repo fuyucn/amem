@@ -1,0 +1,14 @@
+prompt: |
+  UI 数据流可视化：优化 Web UI，增加「当前数据流 输入/输出」的实时可视化反馈，并展示
+  「正在工作的 agent 访问的记忆区域」（recall/search/working_memory 命中哪些单元、哪些
+  类型/分类/标签区域、哪些 actor、消耗/节省多少 token）。
+repo: .
+tasks_file: sandbox/tasks.json
+test_command: pnpm test
+sandbox_root: ./sandbox
+iter_strategy: branches
+pr_mode: none
+base_branch: master
+task_budget: 6
+patience: 2
+quality_thresholds: {max_comment_block: 8, max_comment_line_len: 100, max_func_loc: 60, max_nesting: 4, max_file_loc: 1800}

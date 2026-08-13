@@ -5,7 +5,7 @@ import type { Database as SqliteDatabase } from 'better-sqlite3';
  * Current schema version. Bump this when appending a new migration so that
  * `migrate` upgrades existing databases in place.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS w_meta (
@@ -377,6 +377,25 @@ CREATE INDEX IF NOT EXISTS idx_versions_unit ON versions(unit_id);
 CREATE INDEX IF NOT EXISTS idx_unit_sources_source ON unit_sources(source_id);
 `;
 
+/** Migration 13: real pipeline lifecycle. Each row is one stage a memory
+ *  card passed through (ingested → distilled → curated, or stored / recalled),
+ *  written by the service layer with real timestamps so the Activity UI can
+ *  replay the actual flow instead of animating activity events. */
+const PIPELINE_STAGES_SQL = `
+CREATE TABLE IF NOT EXISTS pipeline_stages (
+  id           TEXT PRIMARY KEY,
+  card_id      TEXT NOT NULL,
+  card_title   TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  actor        TEXT,
+  meta         TEXT,
+  created_at   TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'ws_personal'
+);
+CREATE INDEX IF NOT EXISTS idx_pipeline_stages_card ON pipeline_stages(card_id, workspace_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_pipeline_stages_created ON pipeline_stages(workspace_id, created_at DESC);
+`;
+
 const MIGRATIONS: string[] = [
   SCHEMA_SQL,
   EVENTS_SQL,
@@ -391,6 +410,7 @@ const MIGRATIONS: string[] = [
   ASSET_VERSIONS_SQL,
   '-- migration 11 (scene heat) is applied imperatively below for idempotency',
   QUERY_INDEXES_SQL,
+  PIPELINE_STAGES_SQL,
 ];
 
 /**

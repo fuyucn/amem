@@ -13,7 +13,6 @@ import { PersonaView } from './views/Persona';
 import { WorkingMemory } from './views/WorkingMemory';
 import { Review } from './views/Review';
 import { Settings } from './views/Settings';
-import { SetupWizard } from './views/SetupWizard';
 import { canonicalPath, DEFAULT_TAB, parsePath, tabPath, unitPath, type Route, type Tab } from './router';
 
 const TABS: Array<{ id: Tab; label: string; path: string }> = [
@@ -28,7 +27,6 @@ const TABS: Array<{ id: Tab; label: string; path: string }> = [
   { id: 'persona', label: 'Persona', path: '/persona' },
   { id: 'working-memory', label: 'Working Memory', path: '/working-memory' },
   { id: 'review', label: 'Review', path: '/review' },
-  { id: 'setup', label: 'Setup', path: '/setup' },
   { id: 'settings', label: 'Settings', path: '/settings' },
 ];
 
@@ -62,7 +60,6 @@ const NAV_SECTIONS: Array<{ label: string; tabs: Array<{ id: Tab; label: string;
   {
     label: 'System',
     tabs: [
-      { id: 'setup', label: 'Setup', hint: 'First-run wizard' },
       { id: 'settings', label: 'Settings', hint: 'Auth · workspaces · providers' },
     ],
   },
@@ -80,7 +77,6 @@ const TAB_TITLES: Record<Tab, string> = {
   persona: 'Persona',
   'working-memory': 'Working Memory',
   review: 'Review',
-  setup: 'Setup',
   settings: 'Settings',
 };
 
@@ -178,29 +174,44 @@ export function App() {
 
   return (
     <div className="layout">
+      <a className="skip-link" href="#main">Skip to content</a>
       <aside className="sidebar">
         <div className="sidebar-head">
-          <span className="brand">Amem</span>
-          <span className="muted status-dot">{ok === null ? '…' : ok ? '✓ connected' : '✗ API unavailable'}</span>
+          <div className="brand-row">
+            <svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2.4 20.4 7v10L12 21.6 3.6 17V7z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="12" cy="12" r="3.1" fill="currentColor" />
+              <path d="M12 8.9v6.2M8.9 12h6.2" stroke="currentColor" strokeWidth="1.4" opacity="0.55" />
+            </svg>
+            <span className="brand">Amem</span>
+            <span className="brand-badge">LOCAL</span>
+          </div>
+          <span className={`status-dot ${ok === null ? '' : ok ? 'up' : 'down'}`}>
+            <i className="status-dot-pip" />
+            {ok === null ? 'connecting…' : ok ? 'API connected' : 'API unavailable'}
+          </span>
           <GlobalSearch
             onOpenUnit={(id) => go('units', id)}
             onOpenSearch={openSearch}
           />
-          <select
-            className="ws-select"
-            value={ws}
-            onChange={(e) => {
-              api.setWorkspace(e.target.value);
-              setWs(e.target.value);
-            }}
-            title="Active workspace"
-          >
-            {(workspaces.length ? workspaces : [{ slug: ws, name: ws }]).map((w) => (
-              <option key={w.slug} value={w.slug}>
-                {w.name || w.slug}
-              </option>
-            ))}
-          </select>
+          <label className="ws-field">
+            <span className="ws-label">Workspace</span>
+            <select
+              className="ws-select"
+              value={ws}
+              onChange={(e) => {
+                api.setWorkspace(e.target.value);
+                setWs(e.target.value);
+              }}
+              title="Active workspace"
+            >
+              {(workspaces.length ? workspaces : [{ slug: ws, name: ws }]).map((w) => (
+                <option key={w.slug} value={w.slug}>
+                  {w.name || w.slug}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <nav className="side-nav">
           {NAV_SECTIONS.map((section) => (
@@ -216,7 +227,7 @@ export function App() {
                 >
                   <span className="nav-item-label">
                     {t.label}
-                    {t.id === 'activity' && pulse > 0 ? ' ·' : ''}
+                    {t.id === 'activity' && pulse > 0 ? <i className="nav-live" title="new activity" /> : null}
                   </span>
                   <span className="nav-item-hint">{t.hint}</span>
                 </a>
@@ -225,7 +236,7 @@ export function App() {
           ))}
         </nav>
       </aside>
-      <main className="main">
+      <main className="main" id="main">
         <div className="wrap" key={ws}>
           {tab === 'dashboard' && <Dashboard />}
           {tab === 'activity' && <Activity onOpenUnit={(id) => go('units', id)} />}
@@ -243,7 +254,6 @@ export function App() {
           {tab === 'persona' && <PersonaView />}
           {tab === 'working-memory' && <WorkingMemory />}
           {tab === 'review' && <Review />}
-          {tab === 'setup' && <SetupWizard />}
           {tab === 'settings' && <Settings onAuthChange={refreshMeta} />}
         </div>
       </main>

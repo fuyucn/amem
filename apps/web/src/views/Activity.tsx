@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
+import { PageHead } from '../components/PageHead';
+import { PipelineQueue } from '../components/PipelineQueue';
 import type { ActivityEvent, ActivitySummary, UnitSummary } from '../types';
 import { unitPath } from '../router';
 import { accessRows, actorTotal, flowCards, regionRows } from '../flow';
@@ -105,21 +107,30 @@ export function Activity({ onOpenUnit }: { onOpenUnit?: (id: string) => void }) 
 
   return (
     <div className="grid">
-      <div className="panel row" style={{ justifyContent: 'space-between' }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>Activity</h2>
-          <div className="muted">Live feed of knowledge written by Codex/agents and knowledge used via recall/search.</div>
-        </div>
-        <div className="row">
-          <label className="muted row">
-            <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
-            auto-refresh
-          </label>
-          <button className="btn" onClick={() => void load()}>Refresh</button>
-        </div>
-      </div>
+      <PageHead
+        title="Activity"
+        sub="Live feed of knowledge written by agents and knowledge used via recall and search."
+      >
+        <label className="muted row" style={{ cursor: 'pointer' }}>
+          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+          auto-refresh
+        </label>
+        <button className="btn" onClick={() => void load()}>Refresh</button>
+      </PageHead>
 
       {error && <div className="panel">Failed to load activity: {error}</div>}
+
+      <section className="panel" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="row" style={{ justifyContent: 'space-between', padding: '12px 14px 0' }}>
+          <h3 style={{ margin: 0 }}>Processing queue</h3>
+          <span className="muted" style={{ fontSize: 12 }}>
+            real backend pipeline · cards appear only while this page is open, moves follow actual stages
+          </span>
+        </div>
+        <div style={{ padding: '10px 14px 12px' }}>
+          <PipelineQueue />
+        </div>
+      </section>
 
       {summary && (
         <div className="panel">

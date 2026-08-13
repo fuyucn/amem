@@ -10,7 +10,6 @@ export type Tab =
   | 'persona'
   | 'working-memory'
   | 'review'
-  | 'setup'
   | 'settings';
 
 export interface Route {
@@ -30,7 +29,6 @@ const TAB_PATHS: Record<Tab, string> = {
   persona: '/persona',
   'working-memory': '/working-memory',
   review: '/review',
-  setup: '/setup',
   settings: '/settings',
 };
 

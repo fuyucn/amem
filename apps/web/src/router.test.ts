@@ -20,7 +20,6 @@ describe('parsePath', () => {
       ['/persona', 'persona'],
       ['/working-memory', 'working-memory'],
       ['/review', 'review'],
-      ['/setup', 'setup'],
       ['/settings', 'settings'],
     ];
     for (const [path, tab] of paths) {

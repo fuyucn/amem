@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { PageHead } from '../components/PageHead';
 import type { UnitSummary } from '../types';
 
 export function Review() {
@@ -16,14 +17,16 @@ export function Review() {
   };
 
   return (
-    <div className="panel">
-      <div className="row">
-        <h3 style={{ margin: 0 }}>Review queue</h3>
-        <span className="badge">{items.length} pending</span>
-        <span className="muted" style={{ marginLeft: 'auto' }}>{message}</span>
-      </div>
-      <p className="muted">Auto-extracted units wait here for your approval before they become active knowledge.</p>
-      <ul className="dots">
+    <div className="grid">
+      <PageHead
+        title="Review"
+        sub="Auto-extracted units wait here for approval before they become active knowledge."
+      >
+        <span className="legend-chip">{items.length} pending</span>
+        {message && <span className="muted">{message}</span>}
+      </PageHead>
+      <div className="panel">
+        <ul className="dots">
         {items.length === 0 && <li className="muted">Nothing pending. Ingest content to create units.</li>}
         {items.map((u) => (
           <li key={u.id}>
@@ -36,6 +39,7 @@ export function Review() {
           </li>
         ))}
       </ul>
+      </div>
     </div>
   );
 }

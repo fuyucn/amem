@@ -757,6 +757,8 @@ export interface CurateReport {
   refined?: number;
   /** estimated tokens saved by body compression. */
   refineTokensSaved?: number;
+  /** units this pass actually touched (crystal promotion / decay / links), for pipeline visibility. */
+  touched?: Array<{ id: string; title: string }>;
 }
 
 export interface ImportResult {
@@ -857,6 +859,27 @@ export interface ActivityFilter {
   before?: IsoDate;
 }
 
+/** Lifecycle stage of a memory card in the real pipeline. Written by the
+ *  service layer with real timestamps (ingest → distill → curate, or stored /
+ *  recalled) and replayed by the Activity UI as the actual flow. */
+export type PipelineStageKind =
+  | 'ingested'
+  | 'stored'
+  | 'distilled'
+  | 'curated'
+  | 'recalled';
+
+export interface PipelineStage {
+  id: string;
+  /** The memory card this stage belongs to (trace id or unit id). */
+  cardId: string;
+  cardTitle: string;
+  kind: PipelineStageKind | string;
+  actor?: string;
+  meta?: Record<string, unknown>;
+  createdAt: IsoDate;
+}
+
 /** Aggregated knowledge flow over a recent window: writes in, reads out, and the memory regions agents touched. */
 export interface ActivitySummary {
   window: { events: number; hours: number; since: IsoDate };
@@ -949,6 +972,8 @@ export interface AmemService {
   curate(preset?: 'fast' | 'full'): Promise<CurateReport>;
   stats(): Promise<Stats>;
   activity(filter?: ActivityFilter): Promise<ActivityEvent[]>;
+  /** Real lifecycle stages of memory cards, newest first (Activity queue). */
+  pipeline(limit?: number): Promise<PipelineStage[]>;
   activitySummary(filter?: { hours?: number; limit?: number }): Promise<ActivitySummary>;
   getTraces(filter?: { sessionId?: SessionId; limit?: number }): Promise<Trace[]>;
   getTrace(id: TraceId): Promise<Trace | null>;

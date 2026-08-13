@@ -1,25 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from 'react-force-graph-2d';
 import { api } from '../api';
+import { PageHead } from '../components/PageHead';
 import type { Graph, Scenario, Unit } from '../types';
 
+// Single-hue family: emerald/teal for signal, cool slate for neutrals.
 const TYPE_COLORS: Record<string, string> = {
-  fact: '#4f8cff', decision: '#a06bff', plan: '#3fb97f', procedure: '#e2a03f',
-  preference: '#f26d9d', concept: '#37c8c8', lesson: '#e6784f', question: '#9aa2b1',
-  default: '#9aa2b1',
+  decision: '#34d399', lesson: '#34d399', plan: '#4ade80', procedure: '#2dd4bf',
+  fact: '#6ee7b7', concept: '#5eead4', question: '#8b93a3', preference: '#8b93a3',
+  default: '#7c8ba1',
 };
 const CATEGORY_COLORS: Record<string, string> = {
-  code: '#4f8cff', infra: '#26c6da', workflow: '#e2a03f', product: '#a06bff',
-  personal: '#f26d9d', research: '#37c8c8', meta: '#e6784f', other: '#9aa2b1',
-  default: '#9aa2b1',
+  code: '#34d399', infra: '#2dd4bf', workflow: '#6ee7b7', product: '#4ade80',
+  personal: '#5eead4', research: '#86efac', meta: '#67e8f9', other: '#94a3b8',
+  default: '#7c8ba1',
 };
 const REL_COLORS: Record<string, string> = {
-  supports: '#3fb97f', contradicts: '#ef5350', part_of: '#4f8cff', extends: '#37c8c8',
-  precedes: '#a06bff', references: '#e2a03f', related_to: '#9aa2b1', supersedes: '#f26d9d', caused_by: '#e6784f',
+  supports: '#34d399', part_of: '#2dd4bf', extends: '#6ee7b7', precedes: '#4ade80',
+  references: '#94a3b8', related_to: '#3a4050', supersedes: '#5eead4', caused_by: '#86efac',
+  contradicts: '#f87171',
 };
-const CLUSTER_COLORS = [
-  '#4f8cff', '#a06bff', '#3fb97f', '#e2a03f', '#37c8c8',
-  '#f26d9d', '#e6784f', '#8d6e63', '#78909c', '#9ccc65',
+const CLUSTER_TINTS = [
+  '#34d399', '#2dd4bf', '#6ee7b7', '#4ade80', '#5eead4',
+  '#86efac', '#67e8f9', '#8fa8a4', '#94a3b8', '#a8b5c4',
 ];
 
 function hashStr(s: string): number {
@@ -57,11 +60,11 @@ function truncate(s: string, max = 14): string {
 }
 
 function heatColor(heat: number): string {
-  if (heat >= 100) return '#ef4444';
-  if (heat >= 50) return '#f59e0b';
-  if (heat >= 10) return '#fb923c';
-  if (heat >= 1) return '#fcd34d';
-  return '#8b93a7';
+  if (heat >= 100) return '#a7f3d0';
+  if (heat >= 50) return '#34d399';
+  if (heat >= 10) return '#2dd4bf';
+  if (heat >= 1) return '#7c9a8e';
+  return '#5b6472';
 }
 
 type DrawNode = GraphNodeData & { x: number; y: number };
@@ -175,7 +178,7 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
   const clusterColor = useMemo(() => {
     const map = new Map<string, string>();
     (graph?.clusters ?? []).forEach((c, i) => {
-      map.set(c.id, CLUSTER_COLORS[i % CLUSTER_COLORS.length] ?? CLUSTER_COLORS[0] ?? '#9aa2b1');
+      map.set(c.id, CLUSTER_TINTS[i % CLUSTER_TINTS.length] ?? CLUSTER_TINTS[0] ?? '#7c8ba1');
     });
     return map;
   }, [graph]);
@@ -287,47 +290,51 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
 
   return (
     <div className="grid">
+      <PageHead
+        title="Knowledge graph"
+        sub="Communities are auto-detected and laid out in arcs. Zoom out for cluster anchors, zoom in for hot scenes, hubs, then all titles."
+      >
+        <span className="legend-chip">
+          <i style={{ background: '#34d399' }} />
+          {data.nodes.filter((n) => n.isScenario).length} hot scenes
+        </span>
+        {graph?.clusters?.length ? <span className="legend-chip">{graph.clusters.length} clusters</span> : null}
+        {zoomK !== null && data.nodes.length > 0 && (
+          <span className="legend-chip">
+            zoom {zoomK.toFixed(2)} · {labelTier(zoomK).name} · {labelTier(zoomK).count}/{data.nodes.length} labels
+          </span>
+        )}
+        <button className="btn" onClick={load}>Reload</button>
+      </PageHead>
       <div className="panel">
-        <div className="row">
-          <b>{graph?.nodes.length ?? 0} units</b>
-          <span className="muted">· {graph?.links.length ?? 0} links</span>
-          <span className="badge heat">🔥 {data.nodes.filter((n) => n.isScenario).length} scenes</span>
-          {graph?.clusters?.length ? <span className="badge">{graph.clusters.length} clusters</span> : null}
-          {zoomK !== null && data.nodes.length > 0 && (
-            <span className="badge" style={{ background: 'var(--panel2)', color: 'var(--fg)' }}>
-              zoom k={zoomK.toFixed(2)} · {labelTier(zoomK).name} · labels {labelTier(zoomK).count}/{data.nodes.length}
-            </span>
-          )}
-          <button className="btn" onClick={load} style={{ marginLeft: 'auto' }}>Reload</button>
-        </div>
         {error && <div className="muted">Error: {error}</div>}
         {data.nodes.some((n) => n.isScenario) && (
-          <div className="muted" style={{ marginBottom: 8 }}>
-            🔥 scene nodes are colored by recall heat (hot scenes first) — click a scene to inspect.
-          </div>
+          <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5 }}>
+            Scene nodes are tinted by recall heat — brighter means more recently hit. Click a scene to inspect it.
+          </p>
         )}
         {data.nodes.length === 0 && (
-          <div className="muted">
-            Empty graph — only active (non-archived) units are shown. Ingest knowledge or restore archived units, then click Reload.
+          <div className="empty-note">
+            Empty graph. Only active (non-archived) units are shown — ingest knowledge or restore archived units, then reload.
           </div>
         )}
         {data.nodes.length > 0 && data.nodes.length < 3 && (
-          <div className="muted" style={{ marginBottom: 8 }}>
-            Sparse graph ({data.nodes.length} active unit(s)). After Codex writes more memory, links appear via auto-curate.
+          <div className="empty-note" style={{ marginBottom: 10 }}>
+            Sparse graph ({data.nodes.length} active unit(s)). Links appear as Codex writes memory and auto-curate runs.
           </div>
         )}
         {data.nodes.length > 0 && (
           <>
-            <div className="row" style={{ flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+            <div className="toolbar" style={{ marginBottom: 10 }}>
               {Object.entries(CATEGORY_COLORS).filter(([k]) => k !== 'default').map(([k, color]) => (
-                <span key={k} className="badge" style={{ color: '#fff', background: color }}>{k}</span>
+                <span key={k} className="legend-chip"><i style={{ background: color }} />{k}</span>
               ))}
-              <span className="muted" style={{ marginLeft: 'auto' }}>color = category (clusters / scenes override)</span>
+              <span className="muted" style={{ marginLeft: 'auto', fontSize: 11.5 }}>category · clusters / scenes override</span>
             </div>
             {zoomHint && (
-              <div className="muted" style={{ marginBottom: 6, fontSize: 12 }}>
-                🖱️ 滚轮缩放分级 label：缩小只显示簇 → 中距显示热点/场景/枢纽 → 放大显示全部标题
-                <button className="btn btn-xs" onClick={() => setZoomHint(false)} style={{ marginLeft: 8 }}>隐藏</button>
+              <div className="muted" style={{ marginBottom: 8, fontSize: 12 }}>
+                Scroll to zoom: far out shows cluster anchors · mid shows hot scenes and hubs · close in shows every title
+                <button className="btn" onClick={() => setZoomHint(false)} style={{ marginLeft: 8, padding: '2px 8px' }}>Hide</button>
               </div>
             )}
             <div style={{ position: 'relative', height: '70vh', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
@@ -383,7 +390,7 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
           <div className="row">
             <h3 style={{ margin: 0 }}>{selected.title}</h3>
             <span className="badge">scenario</span>
-            <span className="badge heat">🔥 {selected.heat ?? 0}</span>
+            <span className="badge">{selected.heat ?? 0} heat</span>
             <span className="badge">v{selected.version}</span>
           </div>
           <p className="muted">{selected.summary}</p>

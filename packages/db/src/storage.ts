@@ -15,6 +15,7 @@ import type {
   Job,
   Link,
   Persona,
+  PipelineStage,
   Scenario,
   ScenarioId,
   Session,
@@ -1387,6 +1388,63 @@ export class SqliteStorage implements Storage {
       id: row.id,
       kind: row.kind,
       summary: row.summary,
+      actor: row.actor ?? undefined,
+      meta: row.meta ? (JSON.parse(row.meta) as Record<string, unknown>) : undefined,
+      createdAt: row.created_at,
+    }));
+  }
+
+  // --- Real pipeline lifecycle ---
+
+  async recordPipelineStage(stage: {
+    cardId: string;
+    cardTitle: string;
+    kind: string;
+    actor?: string;
+    meta?: Record<string, unknown>;
+  }): Promise<string> {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `INSERT INTO pipeline_stages (id, card_id, card_title, kind, actor, meta, created_at, workspace_id)
+         VALUES (@id, @card_id, @card_title, @kind, @actor, @meta, @created_at, @workspace_id)`,
+      )
+      .run({
+        id,
+        card_id: stage.cardId,
+        card_title: stage.cardTitle,
+        kind: stage.kind,
+        actor: stage.actor ?? null,
+        meta: stage.meta ? JSON.stringify(stage.meta) : null,
+        created_at: new Date().toISOString(),
+        workspace_id: currentWorkspaceId(),
+      });
+    return id;
+  }
+
+  async listPipeline(limit = 50): Promise<PipelineStage[]> {
+    const cap = Math.min(Math.max(1, limit), 500);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM pipeline_stages
+         WHERE workspace_id = ?
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ?`,
+      )
+      .all(currentWorkspaceId(), cap) as Array<{
+      id: string;
+      card_id: string;
+      card_title: string;
+      kind: string;
+      actor: string | null;
+      meta: string | null;
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      cardId: row.card_id,
+      cardTitle: row.card_title,
+      kind: row.kind,
       actor: row.actor ?? undefined,
       meta: row.meta ? (JSON.parse(row.meta) as Record<string, unknown>) : undefined,
       createdAt: row.created_at,

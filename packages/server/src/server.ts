@@ -608,6 +608,9 @@ export async function createServer(
         limit: req.query.limit ? Number(req.query.limit) : undefined,
       }),
     );
+    fastify.get<{ Querystring: { limit?: string } }>('/pipeline', async (req) =>
+      service.pipeline(req.query.limit ? Number(req.query.limit) : undefined),
+    );
     fastify.get('/export', async () => service.export());
     fastify.post<{ Body: ExportBundle }>('/import', async (req) => service.import(req.body));
     fastify.get('/export/okf', async () => {

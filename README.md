@@ -45,8 +45,7 @@ The dashboard is a real URL-routed SPA (no hash routing) — every tab is a deep
 | `/traces` | raw ingestion traces |
 | `/working-memory` | daily working-memory briefing |
 | `/review` | curation review queue |
-| `/setup` | setup wizard |
-| `/settings` | auth, workspaces, AI providers, PATs |
+| `/settings` | auth, workspaces, AI providers, PATs, agent (MCP) connection |
 
 Legacy `/#/graph`-style hash links are automatically redirected to the path routes. Server-side SPA fallback means any of these URLs can be opened, refreshed, or shared directly.
 

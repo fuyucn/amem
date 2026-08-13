@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { PageHead } from '../components/PageHead';
 import type { Asset, AssetKind, AssetVisibility } from '../types';
 
 const KINDS: Array<AssetKind | ''> = ['', 'skill', 'wiki', 'codegraph', 'prompt'];
@@ -105,6 +106,10 @@ export function Assets() {
 
   return (
     <div className="grid">
+      <PageHead
+        title="Assets"
+        sub="Auto-extracted artifacts — skills, wiki pages, codegraphs — that travel with your knowledge."
+      />
       <div className="panel">
         <div className="row">
           <h3 style={{ margin: 0 }}>Assets</h3>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Highlight } from '../components/Highlight';
+import { PageHead } from '../components/PageHead';
 import type { RecallResult, SearchResult, UnitStatus, UnitType } from '../types';
 
 const CATEGORIES = ['code', 'infra', 'workflow', 'product', 'personal', 'research', 'meta', 'other'] as const;
@@ -82,6 +83,10 @@ export function Search({ initialQuery = '' }: { initialQuery?: string }) {
 
   return (
     <div className="grid">
+      <PageHead
+        title="Search & recall"
+        sub="Ask a question and get the most relevant memories back — semantic recall plus keyword search, with an optional token budget."
+      />
       <form className="panel row" onSubmit={run}>
         <input style={{ flex: 1 }} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Question or topic — e.g. how is agent memory stored" />
         <label className="muted">budget

@@ -12,6 +12,7 @@ import type {
   Scenario, ScenarioStatus, Persona,
   LayeredRecallResult, LayerRefreshResult, SkillExtractResult, AssetExtractResult,
   PrecipitateResult, ImportSourcesResult,
+  PipelineStage,
 } from './types';
 import { authHeaders, getToken, setToken, getWorkspaceSlug, setWorkspaceSlug } from './auth';
 
@@ -159,6 +160,8 @@ export const api = {
   stats: () => request<Stats>('/stats'),
   activity: (f: { kind?: string; limit?: number } = {}) =>
     request<ActivityEvent[]>(`/activity${qs(f)}`),
+  pipeline: (f: { limit?: number } = {}) =>
+    request<PipelineStage[]>(`/pipeline${qs(f)}`),
   activitySummary: (f: { hours?: number; limit?: number } = {}) =>
     request<ActivitySummary>(`/activity/summary${qs(f)}`),
   graph: (clusters = true, scenarios = true) =>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type Me } from '../api';
+import { PageHead } from '../components/PageHead';
 import type { AiProvider, AiStatus } from '../types';
 
 const PROVIDER_PRESETS: Array<{ name: string; baseUrl: string; model: string; note?: string }> = [
@@ -14,6 +15,19 @@ const PROVIDER_PRESETS: Array<{ name: string; baseUrl: string; model: string; no
     note: 'Point this at any OpenAI-compatible service (e.g. your opencode Go gateway, vLLM, LM Studio).',
   },
 ];
+
+function mcpConfigSnippet(pat: string, baseUrl: string): string {
+  return `# Codex ~/.codex/config.toml (add to [mcp_servers] section)
+[mcp_servers.amem]
+command = "npx"
+args = ["-y", "@amem/mcp", "--url", "${baseUrl}/mcp", "--token", "${pat}"]
+env = { AMEM_TOKEN = "${pat}", AMEM_URL = "${baseUrl}" }
+
+# REST (curl)
+# curl -H "Authorization: Bearer ${pat}" -H "X-Amem-Workspace: personal" \\
+#   ${baseUrl}/api/v1/recall -d '{"query":"what do I know?"}'
+`;
+}
 
 export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
   const [me, setMe] = useState<Me | null>(null);
@@ -228,27 +242,18 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
 
   return (
     <div className="grid">
-      <div className="panel">
-        <h2 style={{ marginTop: 0 }}>Settings · administration</h2>
-        <p className="muted">
-          Day-to-day management: login, workspace isolation, PATs for Codex/MCP, sessions, and AI
-          providers. New to Amem? Use the{' '}
-          <a
-            href="/setup"
-            onClick={(e) => {
-              e.preventDefault();
-              window.history.pushState(null, '', '/setup');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            }}
-          >
-            Setup wizard
-          </a>{' '}
-          for guided first-run onboarding. Active workspace:{' '}
-          <code>{api.getWorkspace()}</code>
-        </p>
+      <PageHead
+        title="Settings"
+        sub={
+          <>
+            Day-to-day management: login, workspace isolation, PATs for Codex/MCP, sessions and AI
+            providers. Active workspace: <code>{api.getWorkspace()}</code>
+          </>
+        }
+      >
         {error && <div className="err">{error}</div>}
         {info && <div className="okmsg">{info}</div>}
-      </div>
+      </PageHead>
 
       <div className="activity-columns">
         <div className="panel">
@@ -344,6 +349,14 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
             {minted}
           </pre>
         )}
+        <h4 style={{ marginTop: 16 }}>Connect Codex / Claude Code</h4>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Point an agent at Amem over MCP. Base URL: <code>{`${window.location.protocol}//${window.location.host}`}</code>.
+          Mint a PAT above, then drop this into <code>~/.codex/config.toml</code> (or your Claude Code MCP config):
+        </p>
+        <pre style={{ whiteSpace: 'pre-wrap', background: 'var(--panel2)', padding: 10, borderRadius: 8 }}>
+          {mcpConfigSnippet(minted || 'amem_pat_…', `${window.location.protocol}//${window.location.host}`)}
+        </pre>
         <ul className="dots" style={{ marginTop: 12 }}>
           {tokens.map((t) => (
             <li key={t.id}>

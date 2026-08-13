@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
+import { PageHead } from '../components/PageHead';
 import type { IngestResult, Trace } from '../types';
 
 export function Traces() {
@@ -23,6 +24,10 @@ export function Traces() {
 
   return (
     <div className="grid">
+      <PageHead
+        title="Ingest"
+        sub="Paste raw material — transcripts, docs, notes — and Amem will store the trace and distill atomic units."
+      />
       <form className="panel" onSubmit={doIngest}>
         <h3 style={{ marginTop: 0 }}>Ingest new material</h3>
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" style={{ marginBottom: 6, width: '100%' }} />

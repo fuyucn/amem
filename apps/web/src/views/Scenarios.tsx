@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { PageHead } from '../components/PageHead';
 import type { LayerRefreshResult, Scenario } from '../types';
 
 export function Scenarios() {
@@ -32,6 +33,10 @@ export function Scenarios() {
 
   return (
     <div className="grid">
+      <PageHead
+        title="Scenarios"
+        sub="L2 layer — recurring patterns distilled from units into stable scenarios agents can recall."
+      />
       <div className="panel">
         <div className="row">
           <h3 style={{ margin: 0 }}>L2 — Scenarios</h3>

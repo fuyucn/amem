@@ -490,4 +490,49 @@ describe('SqliteStorage', () => {
     await storage.close();
   });
 
+  it('pipeline stages: record, list newest-first, workspace isolation', async () => {
+    const storage = await createSqliteStorageFromPath(tmpDb('pipeline.db'));
+    const ctxA = {
+      workspaceId: 'ws_a', workspaceSlug: 'a', scopes: ['read', 'write', 'admin'],
+      realm: 'user' as const, authEnabled: true,
+    };
+    const ctxB = {
+      workspaceId: 'ws_b', workspaceSlug: 'b', scopes: ['read', 'write', 'admin'],
+      realm: 'user' as const, authEnabled: true,
+    };
+
+    await runWithRequestContextAsync(ctxA, async () => {
+      await storage.recordPipelineStage({
+        cardId: 'trace_1', cardTitle: 'Sprint review', kind: 'ingested',
+        actor: 'codex', meta: { unitIds: ['u1'] },
+      });
+      await storage.recordPipelineStage({ cardId: 'u1', cardTitle: 'Decision: use Postgres', kind: 'distilled' });
+      await storage.recordPipelineStage({ cardId: 'u1', cardTitle: 'Decision: use Postgres', kind: 'curated', meta: { linksCreated: 2 } });
+      await storage.recordPipelineStage({ cardId: 'u2', cardTitle: 'Lesson: rate limit', kind: 'stored' });
+
+      const list = await storage.listPipeline(10);
+      expect(list.length).toBe(4);
+      // Newest first (same-ms ties fall back to insertion order via rowid).
+      expect(list[0]!.cardId).toBe('u2');
+      expect(list[1]!.kind).toBe('curated');
+      expect(list[3]!.cardId).toBe('trace_1');
+      expect(list[1]!.meta).toEqual({ linksCreated: 2 });
+      expect((await storage.listPipeline(2)).length).toBe(2);
+    });
+
+    // Workspace B sees none of A's stages and can write its own.
+    await runWithRequestContextAsync(ctxB, async () => {
+      expect(await storage.listPipeline(10)).toEqual([]);
+      await storage.recordPipelineStage({ cardId: 'uB', cardTitle: 'B card', kind: 'stored' });
+      const bList = await storage.listPipeline(10);
+      expect(bList.length).toBe(1);
+      expect(bList[0]!.cardId).toBe('uB');
+    });
+
+    await runWithRequestContextAsync(ctxA, async () => {
+      expect((await storage.listPipeline(10)).length).toBe(4);
+    });
+    await storage.close();
+  });
+
 });

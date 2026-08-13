@@ -29,6 +29,7 @@ import type {
   NewUnit,
   NodeCluster,
   Persona,
+  PipelineStage,
   RecallInput,
   RecallResult,
   Scenario,
@@ -250,6 +251,20 @@ export function createService(
       }
     };
 
+    const emitPipeline = async (
+      kind: string,
+      cardId: string,
+      cardTitle: string,
+      meta?: Record<string, unknown>,
+      actor = 'amem',
+    ): Promise<void> => {
+      try {
+        await storage.recordPipelineStage({ kind, cardId, cardTitle, meta, actor });
+      } catch {
+        // pipeline is best-effort; never break the primary path
+      }
+    };
+
     const computeEmbedding = async (text: string): Promise<Unit['embedding']> => {
       const values = await embed.embed(text);
       return { dims: values.length, values };
@@ -432,6 +447,17 @@ export function createService(
             scenes,
           },
         );
+        await emitPipeline('ingested', trace.id, trace.title, {
+          unitIds: units.map((u) => u.id),
+          sessionId: input.sessionId,
+          deduplicated,
+        });
+        for (const u of units) {
+          await emitPipeline('distilled', u.id, u.title, {
+            traceId: trace.id,
+            type: u.type,
+          });
+        }
 
         // Auto-precipitate assets (scenarios/skills/codegraph/wiki) when enabled.
         const ap = config.autoPrecipitate;
@@ -529,6 +555,13 @@ export function createService(
             unitTitles: result.items.map((i) => i.unit.title),
           },
         );
+        for (const item of result.items) {
+          await emitPipeline('recalled', item.unit.id, item.unit.title, {
+            query: input.query,
+            score: item.score,
+            reason: item.reason,
+          });
+        }
         return result;
       },
 
@@ -550,6 +583,14 @@ export function createService(
             personaVersion: result.persona?.version,
           },
         );
+        for (const item of result.units) {
+          await emitPipeline('recalled', item.unit.id, item.unit.title, {
+            query: input.query,
+            score: item.score,
+            reason: item.reason,
+            layered: true,
+          });
+        }
         return result;
       },
 
@@ -607,6 +648,13 @@ export function createService(
             unitTitles: items.map((i) => i.unit.title),
           },
         );
+        for (const item of items) {
+          await emitPipeline('recalled', item.unit.id, item.unit.title, {
+            query,
+            score: item.score,
+            via: item.via,
+          });
+        }
         return { query, items, total: ranked.length };
       },
 
@@ -617,6 +665,10 @@ export function createService(
           `Saved unit "${saved.title}" (${saved.type})`,
           { unitId: saved.id, type: saved.type, status: saved.status },
         );
+        await emitPipeline('stored', saved.id, saved.title, {
+          type: saved.type,
+          status: saved.status,
+        });
         return saved;
       },
 
@@ -654,6 +706,11 @@ export function createService(
           `Updated unit "${next.title}"`,
           { unitId: next.id, reason, version: next.version },
         );
+        await emitPipeline('stored', next.id, next.title, {
+          reason,
+          version: next.version,
+          status: next.status,
+        });
         return next;
       },
 
@@ -945,7 +1002,14 @@ export function createService(
       },
 
       async workingMemory(date?: string, budget?: number): Promise<WorkingMemory> {
-        return buildWorkingMemory(storage, config, date ?? nowIso(), budget);
+        const wm = await buildWorkingMemory(storage, config, date ?? nowIso(), budget);
+        for (const u of wm.selected) {
+          await emitPipeline('recalled', u.id, u.title, {
+            date: wm.date,
+            scope: 'working-memory',
+          });
+        }
+        return wm;
       },
 
       async listScenarios(filter: { tag?: string; status?: ScenarioStatus; limit?: number; sort?: 'updated' | 'heat' } = {}): Promise<Scenario[]> {
@@ -1370,6 +1434,14 @@ export function createService(
           `Curated (${preset ?? 'full'}): +${report.linksCreated} links, ${report.linksPruned} pruned, ${report.crystalsPromoted} crystals, ${report.archived} archived, ${classified} classified`,
           { ...report, preset: preset ?? 'full', classified, examined, viaRules, viaLlm },
         );
+        for (const u of report.touched ?? []) {
+          await emitPipeline('curated', u.id, u.title, {
+            preset: preset ?? 'full',
+            linksCreated: report.linksCreated,
+            crystalsPromoted: report.crystalsPromoted,
+            archived: report.archived,
+          });
+        }
         return { ...report, classified, examined, viaRules, viaLlm };
       },
 
@@ -1404,6 +1476,10 @@ export function createService(
 
       async activity(filter: ActivityFilter = {}): Promise<ActivityEvent[]> {
         return storage.listEvents(filter);
+      },
+
+      async pipeline(limit?: number): Promise<PipelineStage[]> {
+        return storage.listPipeline(limit ?? 50);
       },
 
       async activitySummary(filter: { hours?: number; limit?: number } = {}): Promise<ActivitySummary> {

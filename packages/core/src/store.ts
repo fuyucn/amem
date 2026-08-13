@@ -17,6 +17,7 @@ import type {
   IsoDate,
   Link,
   Persona,
+  PipelineStage,
   Scenario,
   ScenarioId,
   ScenarioStatus,
@@ -146,6 +147,16 @@ export interface Storage {
     meta?: Record<string, unknown>;
   }): Promise<string>;
   listEvents(filter?: ActivityFilter): Promise<ActivityEvent[]>;
+  /** Record one real lifecycle stage of a memory card (ingested/stored/distilled/curated/recalled). */
+  recordPipelineStage(stage: {
+    cardId: string;
+    cardTitle: string;
+    kind: string;
+    actor?: string;
+    meta?: Record<string, unknown>;
+  }): Promise<string>;
+  /** Newest pipeline stages for the current workspace, capped at `limit`. */
+  listPipeline(limit?: number): Promise<PipelineStage[]>;
 
   // --- AI providers (instance-global, not workspace-scoped) ---
   listProviders(): Promise<AiProvider[]>;

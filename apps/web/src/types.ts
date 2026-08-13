@@ -205,6 +205,18 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
+export type PipelineStageKind = 'ingested' | 'stored' | 'distilled' | 'curated' | 'recalled';
+
+export interface PipelineStage {
+  id: string;
+  cardId: string;
+  cardTitle: string;
+  kind: PipelineStageKind | string;
+  actor?: string;
+  meta?: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface ActivitySummary {
   window: { events: number; hours: number; since: string };
   input: { total: number; byKind: Record<string, number>; unitsCreated: number };

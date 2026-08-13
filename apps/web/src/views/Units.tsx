@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { PageHead } from '../components/PageHead';
 import type { Link, Unit, UnitSummary } from '../types';
 
 const CATEGORIES = ['code', 'infra', 'workflow', 'product', 'personal', 'research', 'meta', 'other'] as const;
@@ -124,7 +125,12 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
   };
 
   return (
-    <div className="grid" style={{ gridTemplateColumns: '340px 1fr' }}>
+    <div>
+      <PageHead
+        title="Units"
+        sub="Atomic memories — one idea each, auto-tagged and linked by curate. Select units to batch-manage."
+      />
+      <div className="grid" style={{ gridTemplateColumns: '340px 1fr' }}>
       <div className="panel">
         <div className="row">
           <b>Units</b>
@@ -167,6 +173,11 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
           </form>
         )}
         {error && <div className="muted">{error}</div>}
+        {units.length === 0 && (
+          <div className="empty-note" style={{ marginTop: 10 }}>
+            No units match this filter yet. Ingest material or write memory from Codex, then come back.
+          </div>
+        )}
         <ul className="dots">
           {units.map((u) => {
             const cat = u.category ?? '';
@@ -181,7 +192,7 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
                 />
                 <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => select(u.id)}>
                   <span className="badge">{u.type}</span>
-                  {cat && <span className="badge" style={{ background: 'var(--accent2)' }}>{cat}</span>}
+                  {cat && <span className="badge badge-cat">{cat}</span>}
                   {' '}{u.title}
                   <div className="muted">{u.summary}</div>
                 </div>
@@ -198,7 +209,7 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
             <div className="row">
               <h3 style={{ margin: 0 }}>{unit.title}</h3>
               <span className="badge">{unit.type}</span>
-              {typeof unit.labels?.category === 'string' && <span className="badge" style={{ background: 'var(--accent2)' }}>{unit.labels.category}</span>}
+              {typeof unit.labels?.category === 'string' && <span className="badge badge-cat">{unit.labels.category}</span>}
               <span className="badge">{unit.form}</span>
               <span className="badge">{unit.status}</span>
               <span className="badge">v{unit.version}</span>
@@ -231,6 +242,7 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
             </ul>
           </>
         )}
+      </div>
       </div>
     </div>
   );

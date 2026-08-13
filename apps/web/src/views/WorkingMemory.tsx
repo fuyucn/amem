@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { PageHead } from '../components/PageHead';
 import type { WorkingMemory as WM } from '../types';
 
 export function WorkingMemory() {
@@ -11,6 +12,10 @@ export function WorkingMemory() {
 
   return (
     <div className="grid">
+      <PageHead
+        title="Working memory"
+        sub="Today's attention-prefetch briefing — the most relevant knowledge for a fresh agent session."
+      />
       <div className="panel">
         <div className="row">
           <h3 style={{ margin: 0 }}>Working memory</h3>

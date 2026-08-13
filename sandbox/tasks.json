@@ -1,93 +1,1149 @@
 {
-  "objective": "给 Amem Web UI 增加数据流可视化反馈：展示当前（默认最近 24 小时）的知识输入/输出流量（writes in / reads out、消耗与节省的 token），以及正在工作的 agent 访问过的记忆区域（被 recall/search/working_memory 命中的单元、按类型/分类/标签聚合的区域、top actor）。服务端提供聚合端点，Web 端展示实时面板。",
-  "end_state": "Web UI 的 Activity 页顶部显示「数据流」卡片（输入/输出计数、token 指标）与「agent 访问的记忆区域」面板（被访问单元列表可点击、按类型/分类/标签聚合的条形分布、top actor）；Dashboard 显示紧凑版「Agent memory access」。数据来自新的 GET /api/v1/activity/summary 端点；服务端测试与 Web 纯函数测试覆盖，全量 193+ 回归全绿。",
+  "objective": "在 Amem 现有 account → workspace → 记忆/知识 之上增加 zone 层：自动把不同项目/域的知识分入对应 zone（personal/shared/project/inbox），zone 级 ACL 隔离（同 workspace 下不同用户访问不同 zone，存储层强制），recall/search 自动路由到最相关 zone（默认严格隔离），并支持 PDF/md/txt 文件导入自动成知识。",
+  "end_state": "Schema v15 含 zones/zone_members 表与 units.zone_id；写入自动分区（显式>规则>质心>LLM>inbox），周期重算质心并提议新 zone；zone ACL 在存储层强制（accessibleZoneIds），A/B 个人 zone 互不可见、shared 全成员可见；recall/search/recall_layered 支持 zone 参数与 crossZone 标志、结果带 zone 标注；REST /api/v1/zones* 与 MCP 工具（AMEM_WORKSPACE/AMEM_ZONE）可用；Web 有 zones 管理页、zone 筛选器、文件导入与单元 zone 徽标/迁移；现有全部测试保持绿，docker 一键部署含新环境变量。",
   "non_goals": [
-    "不改动 OAuth/workspace 认证逻辑",
-    "不改动知识图谱布局或搜索排序",
-    "不做 MCP 工具变更",
-    "不引入 jsdom/组件渲染测试框架（Web 测试保持纯函数单测）"
+    "不做跨 workspace 共享（如全局 personal zone）",
+    "不做 docx/pptx 解析（仅 pdf + md/txt，pdf 用 pdf-parse）",
+    "不在 PAT token scope 中增加 zone 级 scope（zone ACL 走 zone_members 解析，token 保持 workspace 级）",
+    "不做 zone 间自动合并/分裂的 LLM 重写（仅质心聚类提议新 zone，人工确认）",
+    "不改动现有 category（labels.category）分类体系，zone 是正交维度"
   ],
   "environment": {
-    "language": "TypeScript",
-    "runtime": "node >= 20",
+    "language": "typescript",
+    "runtime": "node",
     "package_manager": "pnpm",
-    "os": "macOS / Linux",
+    "os": "macos/linux",
     "test_command": "pnpm test",
-    "notes": "monorepo: packages/core (domain+service), packages/db (sqlite storage), packages/server (Fastify REST), apps/web (React/Vite, 纯函数单测无 jsdom)。server 测试用 Fastify inject；activity 事件已带 meta.unitIds/unitTitles/usedTokens/budget。"
+    "notes": "pnpm monorepo: apps/web (React+Vite+vitest 15), packages/core (vitest 112), packages/db (better-sqlite3, vitest 20), packages/server (fastify 5, vitest 55), packages/mcp (vitest 6). Schema migrate 在 packages/db/src/schema.ts (SCHEMA_VERSION=14, addColumnIfMissing)，请求上下文在 packages/core/src/requestContext.ts (AsyncLocalStorage, RequestContext{workspaceId,userId,scopes,...})，storage 用 currentWorkspaceId() 过滤。REST 路由注册于 packages/server/src/server.ts 的 api 插件 (prefix /api/v1)，鉴权上下文在 packages/server/src/authContext.ts。MCP 工具 schema 在 packages/mcp/src/tools.ts，stdio server 在 packages/mcp/src/server.ts (AMEM_WORKSPACE env)。Web API helper 在 apps/web/src/api.ts (BASE=/api/v1)，路由在 apps/web/src/router.ts。"
   },
   "components": [
     {
-      "id": "server-activity-summary",
-      "name": "服务端 activity 聚合端点",
-      "description": "GET /api/v1/activity/summary：聚合最近事件为输入/输出流量、token 指标、被访问单元（含 type/category/tags）与区域分布、top actor。"
+      "id": "c1",
+      "name": "zones-data",
+      "description": "Schema v15：zones/zone_members 表 + units.zone_id + 迁移 + 默认 zone 种子（inbox/shared/每成员 personal）"
     },
     {
-      "id": "web-flow-visualization",
-      "name": "Web 数据流与记忆访问可视化",
-      "description": "Activity 页数据流卡片 + agent 记忆访问面板（单元/区域/actor），Dashboard 紧凑版；纯函数助手 + API/类型接线。"
+      "id": "c2",
+      "name": "zone-acl",
+      "description": "zone 成员 ACL + 请求上下文 accessibleZoneIds + 存储层 zone 过滤（units/links/traces/scenarios/assets）"
+    },
+    {
+      "id": "c3",
+      "name": "zone-assign",
+      "description": "自动分区引擎：显式 zone > 规则 > 嵌入质心 > LLM > inbox；质心重算；新 zone 提议"
+    },
+    {
+      "id": "c4",
+      "name": "recall-scope",
+      "description": "recall/search/recall_layered zone 路由 + crossZone + 结果 zone 标注"
+    },
+    {
+      "id": "c5",
+      "name": "file-ingest",
+      "description": "PDF/md/txt 文件导入管线：提取文本 → 分块 → 带 source 引用的 units → 自动 zone → review"
+    },
+    {
+      "id": "c6",
+      "name": "api-mcp",
+      "description": "REST /zones* 路由 + 鉴权上下文 zone 解析 + MCP 工具 zone 参数（AMEM_ZONE）"
+    },
+    {
+      "id": "c7",
+      "name": "web-zones",
+      "description": "Web zones 管理页 + zone 筛选器 + 文件导入 UI + 单元 zone 徽标/迁移"
+    },
+    {
+      "id": "c8",
+      "name": "docs-verify",
+      "description": "文档（ZONES/DATA_MODEL/API/MCP_TOOLS/DEPLOYMENT）+ docker env + 全量测试绿"
     }
   ],
-  "open_questions": [],
+  "open_questions": [
+    "已有 units 迁移后全部进 z_inbox 再由 auto-assign 一次任务分类（计划默认），是否接受？",
+    "embedding 离线模式（health 显示 embeddingMode=offline）时质心路由不可用，自动降级为规则+关键词+LLM（计划默认），是否接受？",
+    "zone 提议（新聚类）需要在 UI 中人工确认后才生效（计划默认），是否接受？"
+  ],
   "tasks": [
     {
       "id": "T1",
-      "title": "server: GET /api/v1/activity/summary 聚合输入/输出与记忆访问区域",
-      "serves": ["server-activity-summary"],
-      "description": "在 core domain 增加 ActivitySummary 类型；在 AmemService 增加 activitySummary(filter: {hours?, limit?})：默认统计最近 24h（可配置 hours）的事件（listEvents 上限 500）。writes=ingest/save_unit/update_unit/review/link/import/curate/forget；reads=recall/search/working_memory/export。token 指标取 recall/search/working_memory 事件 meta.usedTokens/budget 求和（缺失按 0）。accessedUnits：从 reads 事件 meta.unitIds 计数，取 top 10，经 storage.getUnit 解析出 type/category(labels.category)/tags/标题，记录 actors 与 lastAccessedAt；regions 按 type/category/tag 聚合排序；topActors 统计各 actor 的 writes/reads。server.ts 注册 GET /activity/summary（Query: hours, limit）。",
+      "title": "Schema v15：zones/zone_members + units.zone_id + 种子",
+      "serves": [
+        "c1"
+      ],
+      "description": "在 packages/db/src/schema.ts 将 SCHEMA_VERSION 升到 15，新增 zones 与 zone_members 表，并为 units 增加 zone_id 列（默认 z_inbox）与索引；新增 seedDefaultZones(db) 为每个 workspace 创建 z_inbox（kind=inbox，visibility=workspace）、z_shared（kind=shared，visibility=workspace）以及每个成员一个 z_personal_<userId>（kind=personal，visibility=private，owner_user_id=userId）。种子 zone id 一律用确定性格式：z_inbox_<workspaceId>、z_shared_<workspaceId>、z_personal_<userId>（zones.id 是全局 PK，禁止用裸 z_inbox）。seed 后执行回填：UPDATE units SET zone_id = (SELECT id FROM zones WHERE workspace_id = units.workspace_id AND kind='inbox') WHERE zone_id NOT IN (SELECT id FROM zones)，把迁移遗留的字面量/悬空 zone_id 收敛到真实 inbox 行（幂等）。zones 表字段：id TEXT PK, workspace_id TEXT NOT NULL, slug TEXT NOT NULL, name TEXT NOT NULL, kind TEXT CHECK IN ('personal','shared','project','inbox'), owner_user_id TEXT, visibility TEXT NOT NULL DEFAULT 'private' CHECK IN ('private','workspace','members'), description TEXT, embedding_centroid TEXT, auto INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active' CHECK IN ('active','archived'), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(workspace_id, slug)。zone_members：zone_id, user_id, role CHECK IN ('owner','editor','reader'), created_at, PRIMARY KEY(zone_id,user_id)。在 createSqliteStorageFromPath 中 migrate 后调用 seedDefaultZones（幂等：INSERT OR IGNORE）。",
+      "building_blocks": [
+        "zones 表",
+        "zone_members 表",
+        "addColumnIfMissing('units','zone_id')",
+        "seedDefaultZones(db)"
+      ],
+      "tools": [
+        "vitest"
+      ],
+      "packages": [],
       "files": [
-        { "path": "packages/core/src/domain.ts", "action": "modify", "what": "新增 ActivitySummary 与相关子类型" },
-        { "path": "packages/core/src/service.ts", "action": "modify", "what": "新增 activitySummary 方法（含 write/read kind 常量与聚合逻辑）" },
-        { "path": "packages/server/src/server.ts", "action": "modify", "what": "注册 GET /api/v1/activity/summary 路由" }
+        {
+          "path": "packages/db/src/schema.ts",
+          "action": "modify",
+          "what": "SCHEMA_VERSION=15；新增 ZONES_SQL 常量（zones/zone_members CREATE TABLE + idx_units_zone ON units(workspace_id, zone_id)）；migrate() 中执行 ZONES_SQL + addColumnIfMissing('units','zone_id',\"TEXT NOT NULL DEFAULT 'z_inbox'\")"
+        },
+        {
+          "path": "packages/db/src/seedZones.ts",
+          "action": "create",
+          "what": "export function seedDefaultZones(db: SqliteDatabase): void — 每个 workspace 幂等创建 z_inbox_<workspaceId>/z_shared_<workspaceId>（visibility=workspace），每个 workspace_members 行创建 z_personal_<userId>（visibility=private），随后回填悬空 zone_id 的 units 到该 workspace 的 inbox zone（INSERT OR IGNORE + UPDATE 子查询，幂等）"
+        },
+        {
+          "path": "packages/db/src/storage.ts",
+          "action": "modify",
+          "what": "createSqliteStorageFromPath 中 migrate(db) 之后调用 seedDefaultZones(db)（storage.ts:1489-1492；不要在 index.ts 调用）"
+        },
+        {
+          "path": "packages/db/test/zones.test.ts",
+          "action": "create",
+          "what": "迁移 v15 测试（表/列/索引存在）、种子幂等测试、每成员 personal zone 存在性、legacy 字面量 zone_id 回填到真实 inbox 行"
+        }
       ],
       "subtasks": [
-        { "id": "t1.1", "description": "domain.ts 定义 ActivitySummary { window, input, output, accessedUnits, regions, topActors }" },
-        { "id": "t1.2", "description": "service.ts 实现 activitySummary：读事件→窗口过滤→分类统计→unitIds 聚合→getUnit 解析→区域/actor 汇总" },
-        { "id": "t1.3", "description": "server.ts 注册 GET /activity/summary 并透传 hours/limit" }
+        {
+          "id": "T1.1",
+          "description": "在 packages/db/src/schema.ts 将 SCHEMA_VERSION 常量改为 15"
+        },
+        {
+          "id": "T1.2",
+          "description": "新增 ZONES_SQL 常量并加入 migrate() 执行序列（CREATE TABLE IF NOT EXISTS zones/zone_members + idx_units_zone）"
+        },
+        {
+          "id": "T1.3",
+          "description": "migrate() 中 addColumnIfMissing 给 units 加 zone_id 列（TEXT NOT NULL DEFAULT 字面量 z_inbox）"
+        },
+        {
+          "id": "T1.4",
+          "description": "创建 packages/db/src/seedZones.ts 实现 seedDefaultZones(db)：确定性 id（z_inbox_<workspaceId>/z_shared_<workspaceId>/z_personal_<userId>），z_inbox/z_shared visibility=workspace，INSERT OR IGNORE 幂等"
+        },
+        {
+          "id": "T1.5",
+          "description": "seedDefaultZones 内回填：UPDATE units SET zone_id = (本 workspace inbox zone id) WHERE zone_id NOT IN (SELECT id FROM zones)（幂等，可重复执行）"
+        },
+        {
+          "id": "T1.6",
+          "description": "在 createSqliteStorageFromPath（packages/db/src/storage.ts）migrate 后调用 seedDefaultZones"
+        },
+        {
+          "id": "T1.7",
+          "description": "写 packages/db/test/zones.test.ts 覆盖迁移、种子幂等、personal zone 存在性、legacy 回填到真实 inbox 行"
+        }
       ],
       "tests": [
-        { "description": "server 集成：ingest+recall 后 GET /activity/summary 返回正确 input/output/token/accessedUnits/regions/topActors", "kind": "integration" },
-        { "description": "空事件时返回零值与空数组（fresh app 或参数化夹具）", "kind": "integration" }
+        {
+          "description": "新库 migrate 后存在 zones/zone_members 表与 units.zone_id 列",
+          "kind": "unit"
+        },
+        {
+          "description": "seedDefaultZones 两次调用结果一致（幂等），每个 workspace 有 z_inbox/z_shared，每个成员有 z_personal_<userId>",
+          "kind": "unit"
+        },
+        {
+          "description": "迁移前存在的 units 其悬空 zone_id 被回填到本 workspace 真实 inbox zone 行",
+          "kind": "unit"
+        }
       ],
       "acceptance_criteria": [
-        "GET /api/v1/activity/summary 返回 200 且结构符合 ActivitySummary",
-        "ingest 后 input.byKind.ingest >= 1；recall 后 output.byKind.recall >= 1 且 output.tokensDelivered > 0",
-        "accessedUnits 非空，包含被 recall 命中的单元（unitId/title/accessCount>=1/type 存在），regions.byType 含该单元 type",
-        "无事件时 window.events=0、input.total=0、output.total=0、accessedUnits=[]、topActors=[]",
-        "全量测试通过（含既有 193 个）且 quality_check 通过"
+        "SCHEMA_VERSION=15，旧库（v14 内联 fixture）原地迁移成功",
+        "每个 workspace 有 z_inbox + z_shared（visibility=workspace），每个成员有自己的 personal zone（id=z_personal_<userId>）",
+        "迁移后旧 units 回填到本 workspace 的 z_inbox，且所有 workspace 成员对 inbox units 可见（getZoneAccess 含 visibility=workspace 规则）",
+        "seedDefaultZones 可重复执行（幂等，含回填）"
       ],
       "depends_on": [],
-      "estimated_loc": 180
+      "estimated_loc": 240,
+      "suggested_skills": [],
+      "blocks": [
+        "zones 表",
+        "zone_members 表",
+        "addColumnIfMissing units.zone_id",
+        "seedDefaultZones(db)（确定性 id + 回填）"
+      ]
     },
     {
       "id": "T2",
-      "title": "web: 数据流卡片 + agent 记忆访问面板（Activity + Dashboard）",
-      "serves": ["web-flow-visualization"],
-      "description": "apps/web/src/types.ts 增加 ActivitySummary；api.ts 增加 activitySummary({hours,limit})；新建 apps/web/src/flow.ts 纯函数助手（flowCards/regionRows/accessRows），flow.test.ts 单测；Activity.tsx 顶部新增「Data flow」卡片与「Agent memory access」面板（top units 可点击跳转、regions 三 tab、topActors），复用现有 auto-refresh；Dashboard.tsx 增加紧凑版 Agent memory access 面板（in/out + top5 units）。",
+      "title": "Zone 存储方法：SqliteStorage + Storage 接口",
+      "serves": [
+        "c1",
+        "c2"
+      ],
+      "description": "在 packages/core/src/domain.ts 定义 Zone/ZoneMember/ZoneKind/NewZone 类型（Zone: id, workspaceId, slug, name, kind, ownerUserId?, visibility, description?, embeddingCentroid?, auto, status, createdAt, updatedAt；ZoneMember: zoneId, userId, role, createdAt），并在 Storage 接口新增 zone CRUD 方法（listZones/getZone/createZone/updateZone/deleteZone/listZoneMembers/addZoneMember/removeZoneMember/moveUnitZone）。在 packages/db/src/storage.ts 的 SqliteStorage 中实现这些方法（所有查询按 workspace_id 过滤；moveUnitZone 校验目标 zone 存在后 UPDATE units SET zone_id）。同时打通 units 持久化：unitToRow/rowToUnit 映射加入 zoneId（兼容旧行默认值），createUnit 的 INSERT 列清单加入 zone_id（storage.ts 现有显式列 INSERT，约 line 591-605），否则新建 units 的 zone_id 永远是列默认值。在 packages/core/src/index.ts 导出新类型。",
+      "building_blocks": [
+        "Zone 类型",
+        "Storage.listZones",
+        "Storage.createZone",
+        "Storage.moveUnitZone",
+        "rowToZone/zoneToRow"
+      ],
+      "tools": [
+        "vitest"
+      ],
+      "packages": [],
       "files": [
-        { "path": "apps/web/src/types.ts", "action": "modify", "what": "新增 ActivitySummary 类型（与 core 对齐）" },
-        { "path": "apps/web/src/api.ts", "action": "modify", "what": "新增 activitySummary() API 方法" },
-        { "path": "apps/web/src/flow.ts", "action": "create", "what": "纯函数助手 flowCards/regionRows/accessRows" },
-        { "path": "apps/web/src/views/Activity.tsx", "action": "modify", "what": "顶部数据流卡片 + agent 记忆访问面板" },
-        { "path": "apps/web/src/views/Dashboard.tsx", "action": "modify", "what": "紧凑版 Agent memory access 面板" },
-        { "path": "apps/web/src/index.css", "action": "modify", "what": "面板所需少量样式（如需）" }
+        {
+          "path": "packages/core/src/domain.ts",
+          "action": "modify",
+          "what": "新增 Zone/ZoneMember/ZoneKind/NewZone 类型；Storage 接口增加 8 个 zone 方法；Unit/UnitSummary 增加 zoneId 字段"
+        },
+        {
+          "path": "packages/db/src/storage.ts",
+          "action": "modify",
+          "what": "SqliteStorage 实现 zone CRUD + 成员 + moveUnitZone；unitToRow/rowToUnit 映射 zone_id；createUnit INSERT 列加入 zone_id"
+        },
+        {
+          "path": "packages/core/src/index.ts",
+          "action": "modify",
+          "what": "导出 Zone/ZoneMember/ZoneKind/NewZone 类型"
+        },
+        {
+          "path": "packages/db/test/zones.test.ts",
+          "action": "modify",
+          "what": "扩展：zone CRUD 往返、成员增删、moveUnitZone、createUnit zoneId 持久化"
+        }
       ],
       "subtasks": [
-        { "id": "t2.1", "description": "types.ts + api.ts 接线 activitySummary" },
-        { "id": "t2.2", "description": "flow.ts 纯函数 + flow.test.ts 单测（计数/排序/百分比/空值）" },
-        { "id": "t2.3", "description": "Activity.tsx 顶部面板（含 auto-refresh 接入）与 Dashboard 紧凑面板" }
+        {
+          "id": "T2.1",
+          "description": "在 domain.ts 定义 Zone/ZoneMember/ZoneKind/NewZone 类型（Zone 含 embeddingCentroid）"
+        },
+        {
+          "id": "T2.2",
+          "description": "在 Storage 接口增加 listZones/getZone/createZone/updateZone/deleteZone/listZoneMembers/addZoneMember/removeZoneMember/moveUnitZone"
+        },
+        {
+          "id": "T2.3",
+          "description": "在 SqliteStorage 实现 zone CRUD（workspace_id 过滤，UNIQUE(workspace_id, slug) 冲突处理）"
+        },
+        {
+          "id": "T2.4",
+          "description": "实现 listZoneMembers/addZoneMember/removeZoneMember"
+        },
+        {
+          "id": "T2.5",
+          "description": "实现 moveUnitZone(unitId, zoneId)：校验 zone 存在后 UPDATE units SET zone_id"
+        },
+        {
+          "id": "T2.6",
+          "description": "unitToRow/rowToUnit 映射加入 zone_id，createUnit INSERT 列清单加入 zone_id（旧行兼容默认值）"
+        },
+        {
+          "id": "T2.7",
+          "description": "扩展 zones.test.ts 覆盖 CRUD/成员/迁移、createUnit 后 getUnit 返回的 zoneId 与写入一致"
+        }
       ],
       "tests": [
-        { "description": "flow.test.ts：flowCards 汇总输入输出与 token；regionRows 排序与占比；accessRows 输出；空 summary 安全", "kind": "unit" }
+        {
+          "description": "createZone 后 getZone/listZones 返回一致，update/delete 生效",
+          "kind": "unit"
+        },
+        {
+          "description": "addZoneMember/removeZoneMember 往返正确",
+          "kind": "unit"
+        },
+        {
+          "description": "moveUnitZone 后该 unit 的 zone_id 更新",
+          "kind": "unit"
+        },
+        {
+          "description": "createUnit 显式传 zoneId 后 getUnit 返回相同 zoneId（INSERT 列包含 zone_id）",
+          "kind": "unit"
+        }
       ],
       "acceptance_criteria": [
-        "api.activitySummary() 请求 /api/v1/activity/summary 并返回类型化结果",
-        "flow.ts 纯函数单测通过：输入/输出计数、token 指标、区域排序占比、空数据安全",
-        "Activity 页展示数据流卡片与记忆访问面板（单元/区域/actor），Dashboard 展示紧凑面板",
-        "全量测试通过（含 T1 新增）且 quality_check 通过，web typecheck 通过"
+        "Storage 接口与 SqliteStorage 均含 8 个 zone 方法",
+        "zone CRUD/成员/迁移往返测试通过",
+        "新建 units 的 zone_id 真实持久化（非列默认值）"
       ],
-      "depends_on": ["T1"],
-      "estimated_loc": 260
+      "depends_on": [
+        "T1"
+      ],
+      "estimated_loc": 300,
+      "suggested_skills": [],
+      "blocks": [
+        "Zone 类型",
+        "Storage.listZones",
+        "Storage.createZone",
+        "Storage.moveUnitZone",
+        "createUnit INSERT 含 zone_id",
+        "rowToUnit/unitToRow 映射 zoneId"
+      ]
+    },
+    {
+      "id": "T3",
+      "title": "请求上下文 zone 过滤（存储层强制 ACL）",
+      "serves": [
+        "c2"
+      ],
+      "description": "在 packages/core/src/requestContext.ts 的 RequestContext 增加 zoneIds?: string[]，提供辅助函数 currentZoneIds()（无则返回 undefined 表示不做 zone 过滤的 legacy 兼容）。在 packages/db/src/storage.ts 增加 currentZoneClause() 生成 zone_id IN 占位条件，并在 units/links/traces/scenarios/assets 的 SELECT/UPDATE 路径中，当 ctx.zoneIds 存在时追加 AND 条件（参数绑定避免 SQL 注入）。links 表无 zone_id，过滤语义钉死为：link 可见当且仅当 source_unit_id 或 target_unit_id 所在 unit 属于可访问 zone（OR 语义，保留图连通性），用 IN 子查询实现；scenarios 按关联 unit join 后过滤；assets 复用自身 visibility 模型并与 zone 过滤 AND 叠加（显式说明）。在 packages/core/src/service.ts 的 listUnits/search/recall 调用链不改变签名（过滤由 storage 层完成）。验证 A 请求上下文（zoneIds 不含 B 的个人 zone）读取不到 B 个人 zone 的 units。",
+      "building_blocks": [
+        "RequestContext.zoneIds",
+        "currentZoneIds()",
+        "currentZoneClause()",
+        "legacy 兼容（无 zoneIds 不过滤）"
+      ],
+      "tools": [
+        "vitest"
+      ],
+      "packages": [],
+      "files": [
+        {
+          "path": "packages/core/src/requestContext.ts",
+          "action": "modify",
+          "what": "RequestContext 增加 zoneIds?: string[]；新增 currentZoneIds() 辅助（返回 ctx.zoneIds 拷贝或 undefined）"
+        },
+        {
+          "path": "packages/db/src/storage.ts",
+          "action": "modify",
+          "what": "新增 currentZoneClause(params)：ctx.zoneIds 存在时生成 zone_id IN 条件；应用到 units/listUnits/getUnit/search、links（任一端可达的 OR 子查询）、traces、scenarios（join units 过滤）、assets（visibility 之上 AND zone 过滤）查询"
+        },
+        {
+          "path": "packages/db/test/zones.test.ts",
+          "action": "modify",
+          "what": "扩展：runWithRequestContext 注入 zoneIds 后 listUnits 只返回该 zone 数据；无 zoneIds 时保持全量（legacy）"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T3.1",
+          "description": "requestContext.ts 增加 zoneIds 字段与 currentZoneIds()"
+        },
+        {
+          "id": "T3.2",
+          "description": "storage.ts 实现 currentZoneClause(params) 并接入 units 查询路径（listUnits/getUnit/search）"
+        },
+        {
+          "id": "T3.3",
+          "description": "接入 links（任一端可达 OR 子查询）、traces、scenarios（join units）、assets（AND 叠加 visibility）查询路径"
+        },
+        {
+          "id": "T3.4",
+          "description": "测试：zoneIds 过滤生效 + legacy 兼容 + links 按端点 zone 过滤"
+        }
+      ],
+      "tests": [
+        {
+          "description": "ctx.zoneIds=[z_shared] 时 listUnits 只返回 z_shared 的 units",
+          "kind": "unit"
+        },
+        {
+          "description": "ctx.zoneIds 不含 B 个人 zone 时 getUnit(B 个人 zone 的 unit) 返回空",
+          "kind": "unit"
+        },
+        {
+          "description": "无 zoneIds 时行为与旧版一致（全 workspace 可见）",
+          "kind": "unit"
+        },
+        {
+          "description": "links 过滤：一端在可访问 zone 即返回该 link，两端均不可访问则不返回",
+          "kind": "unit"
+        }
+      ],
+      "acceptance_criteria": [
+        "存储层按 accessibleZoneIds 硬过滤，无法绕过",
+        "旧调用方（无 zoneIds）行为不变",
+        "links/scenarios/assets 过滤语义与测试一致"
+      ],
+      "depends_on": [
+        "T2"
+      ],
+      "estimated_loc": 260,
+      "suggested_skills": []
+    },
+    {
+      "id": "T4",
+      "title": "zones 服务 + 自动分区引擎",
+      "serves": [
+        "c3"
+      ],
+      "description": "创建 packages/core/src/zones.ts：resolveZoneForWrite(storage, embed, llm, ctx, input, opts) 按 显式 input.zoneId > 规则（tags 含 zone slug、source kind、labels.category、title 前缀）> 嵌入质心（对 zone.embeddingCentroid 计算余弦，>0.6 命中）> LLM 一次性分类（传 zone 列表+名称，intent marker 'assign a zone to this knowledge unit'）> z_inbox 兜底。recomputeZoneCentroids(storage, workspaceId)：对每个 zone 平均其 units 的 embedding（跳过无 embedding）。proposeNewZones(storage, embed, workspaceId, opts)：对 units 嵌入做凝聚聚类（最小簇 5，cosine 距离），每个簇产出 ZoneProposal {name, slug, sampleUnitIds, size}，auto=1 的 project zone 直接创建或返回给 UI。getZoneAccess(storage, userId, workspaceId)：返回 个人自有（owner_user_id=userId）+ visibility=workspace（含 z_inbox/z_shared）+ 显式成员（zone_members 行）三类 zone 的 id 列表。在 service.ts 的 ingest/saveUnit 输入中支持 zoneId，未指定时自动 resolve 并写入；unit 读取结果暴露 zoneId。",
+      "building_blocks": [
+        "resolveZoneForWrite",
+        "recomputeZoneCentroids",
+        "proposeNewZones",
+        "getZoneAccess",
+        "凝聚聚类"
+      ],
+      "tools": [
+        "vitest"
+      ],
+      "packages": [],
+      "files": [
+        {
+          "path": "packages/core/src/zones.ts",
+          "action": "create",
+          "what": "resolveZoneForWrite/recomputeZoneCentroids/proposeNewZones/getZoneAccess + ZoneProposal 类型"
+        },
+        {
+          "path": "packages/core/src/service.ts",
+          "action": "modify",
+          "what": "ingest/saveUnit 输入增加 zoneId?；未指定时调用 resolveZoneForWrite；unit 返回 zoneId"
+        },
+        {
+          "path": "packages/core/src/llm.ts",
+          "action": "modify",
+          "what": "新增 ZONE_ASSIGN_INTENT 常量（若已有 intent 机制则复用）"
+        },
+        {
+          "path": "packages/core/src/index.ts",
+          "action": "modify",
+          "what": "导出 zones.ts 的公共 API"
+        },
+        {
+          "path": "packages/core/test/zones.test.ts",
+          "action": "create",
+          "what": "规则命中/质心命中（mock embedder）/LLM 路径（MockLlmClient）/inbox 兜底/聚类提议"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T4.1",
+          "description": "定义 ZoneProposal 类型与 getZoneAccess"
+        },
+        {
+          "id": "T4.2",
+          "description": "实现 resolveZoneForWrite 的显式+规则分支"
+        },
+        {
+          "id": "T4.3",
+          "description": "实现质心余弦分支（embedding 不可用/offline 时跳过）"
+        },
+        {
+          "id": "T4.4",
+          "description": "实现 LLM 分类分支与 inbox 兜底"
+        },
+        {
+          "id": "T4.5",
+          "description": "实现 recomputeZoneCentroids 与 proposeNewZones（凝聚聚类）"
+        },
+        {
+          "id": "T4.6",
+          "description": "接入 service.ingest/saveUnit 并写测试"
+        }
+      ],
+      "tests": [
+        {
+          "description": "saveUnit 带 tags 命中 zone 规则时写入该 zone",
+          "kind": "unit"
+        },
+        {
+          "description": "embedding 可用时质心命中>0.6 分配对应 zone，否则 inbox",
+          "kind": "unit"
+        },
+        {
+          "description": "MockLlmClient 返回 zone 时走 LLM 分支",
+          "kind": "unit"
+        },
+        {
+          "description": "proposeNewZones 对 5+ 相似 units 产出提案",
+          "kind": "unit"
+        },
+        {
+          "description": "getZoneAccess 对普通成员返回 inbox+shared+自己的 personal zone，不含他人 personal zone",
+          "kind": "unit"
+        }
+      ],
+      "acceptance_criteria": [
+        "自动分区顺序：显式 > 规则 > 质心 > LLM > inbox",
+        "embedding offline 时质心分支自动跳过",
+        "getZoneAccess 返回 个人自有 + visibility=workspace（含 inbox/shared）+ 显式成员 三类 zone"
+      ],
+      "depends_on": [
+        "T3"
+      ],
+      "estimated_loc": 320,
+      "suggested_skills": [
+        "swe-loop"
+      ]
+    },
+    {
+      "id": "T5",
+      "title": "recall/search zone 路由与标注",
+      "serves": [
+        "c4"
+      ],
+      "description": "在 packages/core/src/domain.ts 扩展 RecallInput（zone?: string 为 zone id/slug；crossZone?: boolean 默认 false）、SearchOptions（zone?: string）、ContextItem 与 UnitSummary（zoneId/zoneSlug/zoneName）、RecallResult/LayeredRecallResult（routedZone?: {id,slug,name,reason}）。在 packages/core/src/recall.ts 实现 routeZone(query, ctx, storage)：对可访问 zone 计算关键词重叠（zone name/description/tags）+ 质心余弦，最高分>阈值（0.35）则把 storage 调用包在 runWithRequestContextAsync({...ctx, zoneIds:[target]})（recall 是异步路径，必须用 async 变体，见 requestContext.ts:39） 内限定到该 zone；否则保持 ctx.zoneIds 全集。crossZone=false 时绝不返回 zoneIds 之外的单元；为每个 ContextItem 标注 zone。layeredRecall.ts 的 L1/L2 层同样路由。service.search 透传 SearchOptions.zone。",
+      "building_blocks": [
+        "routeZone(query, ctx, storage)",
+        "RecallInput.zone/crossZone",
+        "ContextItem.zoneId",
+        "runWithRequestContext 收窄 zoneIds"
+      ],
+      "tools": [
+        "vitest"
+      ],
+      "packages": [],
+      "files": [
+        {
+          "path": "packages/core/src/domain.ts",
+          "action": "modify",
+          "what": "RecallInput/SearchOptions/ContextItem/UnitSummary/RecallResult 增加 zone 字段"
+        },
+        {
+          "path": "packages/core/src/recall.ts",
+          "action": "modify",
+          "what": "实现 routeZone 并在搜索前收窄 zoneIds（runWithRequestContextAsync）；结果标注 zone"
+        },
+        {
+          "path": "packages/core/src/layeredRecall.ts",
+          "action": "modify",
+          "what": "L1/L2 层应用同样的 zone 路由与标注"
+        },
+        {
+          "path": "packages/core/src/service.ts",
+          "action": "modify",
+          "what": "recall/recallLayered/search 透传 zone/crossZone 参数"
+        },
+        {
+          "path": "packages/core/test/recallZone.test.ts",
+          "action": "create",
+          "what": "显式 zone 限定/自动路由/crossZone=false 排除/结果标注"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T5.1",
+          "description": "扩展 domain.ts 类型"
+        },
+        {
+          "id": "T5.2",
+          "description": "实现 routeZone（关键词+质心评分，阈值 0.35）"
+        },
+        {
+          "id": "T5.3",
+          "description": "recall.ts 收窄 zoneIds 并标注结果"
+        },
+        {
+          "id": "T5.4",
+          "description": "layeredRecall.ts 应用同样逻辑"
+        },
+        {
+          "id": "T5.5",
+          "description": "service 透传参数并写测试"
+        }
+      ],
+      "tests": [
+        {
+          "description": "recall(deploy bug, {zone:ops}) 只返回 ops zone 单元",
+          "kind": "unit"
+        },
+        {
+          "description": "无 zone 参数时自动路由到相关 zone，结果带 routedZone 与 item.zoneId（mock embedder 固定向量 + 查询含 zone name，保证 0.35 阈值分支确定性）",
+          "kind": "unit"
+        },
+        {
+          "description": "crossZone=false 时不含其他 zone 单元",
+          "kind": "unit"
+        }
+      ],
+      "acceptance_criteria": [
+        "recall/search/layered 支持 zone 与 crossZone",
+        "默认严格隔离（crossZone=false）",
+        "结果可追溯到 zone"
+      ],
+      "depends_on": [
+        "T3",
+        "T4"
+      ],
+      "estimated_loc": 260,
+      "suggested_skills": [
+        "optimize-loop"
+      ]
+    },
+    {
+      "id": "T6",
+      "title": "REST /zones* 路由 + 鉴权上下文 zone 解析",
+      "serves": [
+        "c6"
+      ],
+      "description": "在 packages/server/src/server.ts 的 api 插件（/api/v1）新增：GET /zones（当前用户可访问，含成员数/单元数）、POST /zones、PATCH /zones/:id、DELETE /zones/:id（非空则 409）、GET/POST/DELETE /zones/:id/members、POST /zones/recompute、POST /zones/proposals、POST /units/:id/zone {zoneId}；现有 /ingest、/recall、/recall/layered、/search、/units 接受 zone/crossZone 参数透传。在 packages/server/src/authContext.ts：解析用户+workspace 后调用 getZoneAccess(storage, userId, workspaceId) 设置 ctx.zoneIds；anonymous/legacy（无 userId）→ 全部 zone（向后兼容）。写双用户集成测试验证 A/B 隔离。",
+      "building_blocks": [
+        "GET /zones",
+        "POST /zones",
+        "zones/:id/members",
+        "POST /units/:id/zone",
+        "authContext.getZoneAccess"
+      ],
+      "tools": [
+        "vitest"
+      ],
+      "packages": [],
+      "files": [
+        {
+          "path": "packages/server/src/server.ts",
+          "action": "modify",
+          "what": "注册 @fastify/multipart 前的 zones 路由组（GET/POST/PATCH/DELETE /zones、members、recompute、proposals、units/:id/zone）；既有路由透传 zone 参数"
+        },
+        {
+          "path": "packages/server/src/authContext.ts",
+          "action": "modify",
+          "what": "请求上下文构建时设置 zoneIds（用户→getZoneAccess；anonymous/legacy→全部）"
+        },
+        {
+          "path": "packages/server/test/zones.http.test.ts",
+          "action": "create",
+          "what": "双用户集成测试：A 可见 personal(A)+shared，B 可见 personal(B)+shared，A 无法读取 B 个人 zone 的 units，成员加入后可见"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T6.1",
+          "description": "authContext.ts 设置 zoneIds（含 legacy 兼容）"
+        },
+        {
+          "id": "T6.2",
+          "description": "实现 /zones CRUD 路由"
+        },
+        {
+          "id": "T6.3",
+          "description": "实现 members/recompute/proposals/units/:id/zone 路由"
+        },
+        {
+          "id": "T6.4",
+          "description": "既有路由透传 zone/crossZone 参数"
+        },
+        {
+          "id": "T6.5",
+          "description": "写 A/B 隔离集成测试"
+        }
+      ],
+      "tests": [
+        {
+          "description": "用户 A 的 GET /zones 只含 personal(A)+shared+成员 zone",
+          "kind": "integration"
+        },
+        {
+          "description": "A 请求 /units 看不到 B 个人 zone 的单元",
+          "kind": "integration"
+        },
+        {
+          "description": "POST /units/:id/zone 迁移成功后 GET /units 按新 zone 可见",
+          "kind": "integration"
+        }
+      ],
+      "acceptance_criteria": [
+        "REST zones 全 CRUD + 成员 + 迁移可用",
+        "A/B 隔离在 HTTP 层验证通过",
+        "legacy 匿名访问保持全量兼容"
+      ],
+      "depends_on": [
+        "T3",
+        "T4"
+      ],
+      "estimated_loc": 260,
+      "suggested_skills": []
+    },
+    {
+      "id": "T7",
+      "title": "MCP zone 工具面",
+      "serves": [
+        "c6"
+      ],
+      "description": "在 packages/mcp/src/tools.ts 为 save_unit、ingest、recall、recall_layered、search、list_units 增加可选 zone（zone slug/id）与 crossZone（仅 recall/recall_layered/search）参数并更新工具描述；在 packages/mcp/src/server.ts 读取 AMEM_ZONE 环境变量：设置时解析为 zoneId 放入请求上下文 zoneIds（与 AMEM_WORKSPACE 一致的方式），工具调用时把显式 zone 参数透传给 service。其余读工具（get_graph/working_memory/get_unit/get_scenario/list_scenarios/stats/activity/curate 等未加显式 zone 参数的）不需要逐个加参数——它们通过 AMEM_ZONE → ctx.zoneIds → T3 存储层过滤自动生效，本任务须在工具描述与代码注释中写明这一点；link_units 写链接前校验源/目标 unit 在可访问 zone 内（getUnit 已按 ctx 过滤，不可达即报错）。写测试验证 recall zone 参数与 AMEM_ZONE 环境作用域。",
+      "building_blocks": [
+        "save_unit.zone",
+        "recall.zone/crossZone",
+        "AMEM_ZONE env",
+        "stdio 上下文 zoneIds"
+      ],
+      "tools": [
+        "vitest"
+      ],
+      "packages": [],
+      "files": [
+        {
+          "path": "packages/mcp/src/tools.ts",
+          "action": "modify",
+          "what": "6 个工具的 zod schema 增加 zone/crossZone 可选参数；工具描述更新"
+        },
+        {
+          "path": "packages/mcp/src/server.ts",
+          "action": "modify",
+          "what": "读取 AMEM_ZONE env 并解析为 zoneIds 注入上下文"
+        },
+        {
+          "path": "packages/mcp/test/zones.test.ts",
+          "action": "create",
+          "what": "recall(zone) 只返回该 zone；AMEM_ZONE 设置后 working_memory/recall 作用域受限"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T7.1",
+          "description": "tools.ts 为 6 个工具加 zone/crossZone schema 与描述；注明其余读工具经 ctx.zoneIds 自动作用域化"
+        },
+        {
+          "id": "T7.2",
+          "description": "server.ts 实现 AMEM_ZONE 解析注入（与 AMEM_WORKSPACE 同模式）"
+        },
+        {
+          "id": "T7.3",
+          "description": "工具 handler 透传 zone 到 service；link_units 校验端点可达"
+        },
+        {
+          "id": "T7.4",
+          "description": "写 MCP 测试（recall zone、AMEM_ZONE 下 save_unit/get_graph、link_units 越权报错）"
+        }
+      ],
+      "tests": [
+        {
+          "description": "callTool recall 带 zone 参数只返回该 zone",
+          "kind": "unit"
+        },
+        {
+          "description": "AMEM_ZONE=ops 时 save_unit 落到 ops zone",
+          "kind": "unit"
+        },
+        {
+          "description": "AMEM_ZONE=ops 时 get_graph 节点/边不含其他 zone 的单元（存储层过滤生效）",
+          "kind": "unit"
+        },
+        {
+          "description": "link_units 引用不可访问 zone 的 unit 时报错",
+          "kind": "unit"
+        }
+      ],
+      "acceptance_criteria": [
+        "Codex/Claude 可通过 MCP 用 zone 读写",
+        "AMEM_ZONE 环境变量生效且覆盖全部读工具（含 get_graph/working_memory）",
+        "跨 zone 写链接被阻止"
+      ],
+      "depends_on": [
+        "T5",
+        "T6"
+      ],
+      "estimated_loc": 220,
+      "suggested_skills": []
+    },
+    {
+      "id": "T8",
+      "title": "文件导入管线（pdf/md/txt）",
+      "serves": [
+        "c5"
+      ],
+      "description": "创建 packages/core/src/fileImport.ts：extractFileText(buffer, kind)（pdf 用 pdf-parse 懒加载，md/txt 直接 toString）、chunkText(text, maxLen=1500, overlap=150)（复用 packages/core/src/importer.ts 的分块风格）、importFile(service, {fileName, kind, buffer, zoneId?})：每个分块 → 按内容哈希去重创建 source + trace + 蒸馏 unit（status=pending，unit_sources 引用），zone 未指定时调 resolveZoneForWrite；返回 ImportFileResult {unitsCreated, sourcesCreated, zoneId}。在 packages/server/package.json 增加 @fastify/multipart 与 pdf-parse 依赖；server.ts 注册 multipart 并新增 POST /api/v1/ingest/file（multipart file 字段）。测试用 md 文本与 mock pdf buffer。",
+      "building_blocks": [
+        "extractFileText",
+        "chunkText",
+        "importFile",
+        "POST /ingest/file",
+        "content_hash 去重"
+      ],
+      "tools": [
+        "vitest"
+      ],
+      "packages": [
+        "@fastify/multipart",
+        "pdf-parse"
+      ],
+      "files": [
+        {
+          "path": "packages/core/src/fileImport.ts",
+          "action": "create",
+          "what": "extractFileText/chunkText/importFile + ImportFileResult 类型"
+        },
+        {
+          "path": "packages/core/src/index.ts",
+          "action": "modify",
+          "what": "导出 fileImport API"
+        },
+        {
+          "path": "packages/server/package.json",
+          "action": "modify",
+          "what": "新增 @fastify/multipart 与 pdf-parse 依赖"
+        },
+        {
+          "path": "packages/server/src/server.ts",
+          "action": "modify",
+          "what": "注册 multipart；POST /api/v1/ingest/file 接收 file 字段并调用 importFile"
+        },
+        {
+          "path": "packages/core/test/fileImport.test.ts",
+          "action": "create",
+          "what": "md 文本→带 source 的 pending units；同内容两次导入去重；zone 自动分配"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T8.1",
+          "description": "实现 extractFileText 与 chunkText"
+        },
+        {
+          "id": "T8.2",
+          "description": "实现 importFile（source 去重 + trace + 蒸馏 unit + zone）"
+        },
+        {
+          "id": "T8.3",
+          "description": "server 依赖与 multipart 注册"
+        },
+        {
+          "id": "T8.4",
+          "description": "实现 POST /api/v1/ingest/file 路由"
+        },
+        {
+          "id": "T8.5",
+          "description": "写导入测试"
+        }
+      ],
+      "tests": [
+        {
+          "description": "importFile(md) 生成 pending units 且带 source 引用",
+          "kind": "unit"
+        },
+        {
+          "description": "同内容二次导入不重复建 source/unit",
+          "kind": "unit"
+        },
+        {
+          "description": "zoneId 未指定时自动分配 zone",
+          "kind": "unit"
+        }
+      ],
+      "acceptance_criteria": [
+        "API 上传 md/txt/pdf 生成可 review 的知识单元",
+        "content_hash 去重有效",
+        "zone 自动分配"
+      ],
+      "depends_on": [
+        "T4"
+      ],
+      "estimated_loc": 320,
+      "suggested_skills": [
+        "swe-loop"
+      ]
+    },
+    {
+      "id": "T9",
+      "title": "Web zones 管理页",
+      "serves": [
+        "c7"
+      ],
+      "description": "在 apps/web/src/api.ts 增加 zones CRUD/members/proposals/recompute/moveUnitZone 调用；新建 apps/web/src/views/Zones.tsx：zone 列表（kind 徽标、visibility、成员数、单元数）、创建/编辑表单（slug/name/kind/description/visibility）、成员面板（增删改角色）、提议面板（accept/dismiss）、重算质心按钮；apps/web/src/router.ts 增加 zones tab（/zones）；apps/web/src/App.tsx 的 TABS/NAV_SECTIONS/TAB_TITLES/渲染加入 Zones；router.test.ts 已知 tab 列表加入 /zones。遵循现有单色 #34d399 设计语言（参考 design-taste-frontend）。",
+      "building_blocks": [
+        "Zones 视图",
+        "zones tab",
+        "api.zones*",
+        "提议 accept/dismiss"
+      ],
+      "tools": [
+        "vitest",
+        "vite build"
+      ],
+      "packages": [],
+      "files": [
+        {
+          "path": "apps/web/src/api.ts",
+          "action": "modify",
+          "what": "zones CRUD/members/proposals/recompute/moveUnitZone API 方法"
+        },
+        {
+          "path": "apps/web/src/views/Zones.tsx",
+          "action": "create",
+          "what": "zone 管理页（列表/表单/成员/提议/重算）"
+        },
+        {
+          "path": "apps/web/src/router.ts",
+          "action": "modify",
+          "what": "Tab 类型与 TAB_PATHS 增加 zones: '/zones'"
+        },
+        {
+          "path": "apps/web/src/App.tsx",
+          "action": "modify",
+          "what": "TABS/NAV_SECTIONS/TAB_TITLES/渲染 switch 加入 Zones"
+        },
+        {
+          "path": "apps/web/src/router.test.ts",
+          "action": "modify",
+          "what": "known-tabs 增加 /zones"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T9.1",
+          "description": "api.ts 增加 zone API 方法"
+        },
+        {
+          "id": "T9.2",
+          "description": "创建 Zones.tsx 列表 + 创建/编辑表单"
+        },
+        {
+          "id": "T9.3",
+          "description": "成员面板与提议 accept/dismiss"
+        },
+        {
+          "id": "T9.4",
+          "description": "路由与导航接入"
+        },
+        {
+          "id": "T9.5",
+          "description": "构建 + 路由测试"
+        }
+      ],
+      "tests": [
+        {
+          "description": "router 解析 /zones 为 zones tab",
+          "kind": "unit"
+        },
+        {
+          "description": "pnpm --filter @amem/web build 成功",
+          "kind": "unit"
+        }
+      ],
+      "acceptance_criteria": [
+        "侧边栏出现 Zones，可 CRUD、管理成员、处理提议"
+      ],
+      "depends_on": [
+        "T6"
+      ],
+      "estimated_loc": 380,
+      "suggested_skills": [
+        "design-taste-frontend"
+      ]
+    },
+    {
+      "id": "T10",
+      "title": "Web zone 筛选器 + 单元 zone 徽标/迁移",
+      "serves": [
+        "c7"
+      ],
+      "description": "在 apps/web/src/views/Units.tsx、Search.tsx、GraphView.tsx、Dashboard.tsx 增加 zone 筛选下拉（All / 各可访问 zone），GraphView 按 zone 着色/图例，Dashboard 增加按 zone 计数卡片；unit 列表行显示 zone 徽标，units/:id 详情页提供 move-to-zone 下拉（调 api.moveUnitZone）。共享的 activeZone 筛选状态放 App.tsx（或新建 useZoneFilter hook）。",
+      "building_blocks": [
+        "zone 筛选下拉",
+        "图例着色",
+        "move-to-zone",
+        "useZoneFilter"
+      ],
+      "tools": [
+        "vitest",
+        "vite build"
+      ],
+      "packages": [],
+      "files": [
+        {
+          "path": "apps/web/src/views/Units.tsx",
+          "action": "modify",
+          "what": "zone 筛选 + 行内 zone 徽标"
+        },
+        {
+          "path": "apps/web/src/views/Search.tsx",
+          "action": "modify",
+          "what": "zone 筛选 + 结果 zone 标签"
+        },
+        {
+          "path": "apps/web/src/views/GraphView.tsx",
+          "action": "modify",
+          "what": "zone 筛选 + 按 zone 着色与图例"
+        },
+        {
+          "path": "apps/web/src/views/Dashboard.tsx",
+          "action": "modify",
+          "what": "zone 分布卡片"
+        },
+        {
+          "path": "apps/web/src/App.tsx",
+          "action": "modify",
+          "what": "activeZone 状态/hook + units/:id move-to-zone 入口"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T10.1",
+          "description": "App.tsx 增加 useZoneFilter 状态"
+        },
+        {
+          "id": "T10.2",
+          "description": "Units/Search 接入筛选与徽标"
+        },
+        {
+          "id": "T10.3",
+          "description": "GraphView 按 zone 着色与图例"
+        },
+        {
+          "id": "T10.4",
+          "description": "Dashboard zone 分布卡片 + move-to-zone"
+        }
+      ],
+      "tests": [
+        {
+          "description": "pnpm --filter @amem/web build 成功",
+          "kind": "unit"
+        }
+      ],
+      "acceptance_criteria": [
+        "切换 zone 筛选后各视图数据刷新且带 zone 标注",
+        "单元可迁移 zone"
+      ],
+      "depends_on": [
+        "T9"
+      ],
+      "estimated_loc": 260,
+      "suggested_skills": [
+        "design-taste-frontend"
+      ]
+    },
+    {
+      "id": "T11",
+      "title": "Web Review 文件导入 UI",
+      "serves": [
+        "c7"
+      ],
+      "description": "在 apps/web/src/views/Review.tsx 顶部增加上传区（文件选择 + 拖拽，可选 zone 下拉），调 api.uploadFile(file, zoneId)（apps/web/src/api.ts 新增 multipart 上传方法）→ POST /api/v1/ingest/file，成功后刷新 pending units 列表并显示本次导入批次（units 数、zone）。",
+      "building_blocks": [
+        "上传区",
+        "api.uploadFile",
+        "批次反馈"
+      ],
+      "tools": [
+        "vitest",
+        "vite build"
+      ],
+      "packages": [],
+      "files": [
+        {
+          "path": "apps/web/src/api.ts",
+          "action": "modify",
+          "what": "uploadFile(file, zoneId?) 用 FormData POST /ingest/file"
+        },
+        {
+          "path": "apps/web/src/views/Review.tsx",
+          "action": "modify",
+          "what": "上传区 + 批次反馈 + 刷新 pending 列表"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T11.1",
+          "description": "api.uploadFile 实现"
+        },
+        {
+          "id": "T11.2",
+          "description": "Review 上传区 UI 与反馈"
+        }
+      ],
+      "tests": [
+        {
+          "description": "pnpm --filter @amem/web build 成功",
+          "kind": "unit"
+        }
+      ],
+      "acceptance_criteria": [
+        "Review 页可上传 pdf/md/txt，导入结果立即可见"
+      ],
+      "depends_on": [
+        "T8",
+        "T9"
+      ],
+      "estimated_loc": 180,
+      "suggested_skills": []
+    },
+    {
+      "id": "T12",
+      "title": "文档 + docker env + 全量验证",
+      "serves": [
+        "c8"
+      ],
+      "description": "新增 docs/ZONES.md（概念：account→workspace→zone→memory；zone 种类/可见性；ACL 规则；自动分区管线；recall 路由；文件导入；API/MCP 参考）；更新 docs/DATA_MODEL.md、docs/API.md、docs/MCP_TOOLS.md、docs/DEPLOYMENT.md、docs/AUTH_WORKSPACES.md（zone ACL 模型）（AMEM_WORKSPACE/AMEM_ZONE）；docker/docker-compose.yml 增加 AMEM_WORKSPACE/AMEM_ZONE 环境变量透传；运行 pnpm test（core/db/server/mcp/web 全绿）、pnpm build、tools/smoke.mjs，docker compose build/up 冒烟。",
+      "building_blocks": [
+        "docs/ZONES.md",
+        "compose env 透传",
+        "全量测试"
+      ],
+      "tools": [
+        "pnpm",
+        "docker compose"
+      ],
+      "packages": [],
+      "files": [
+        {
+          "path": "docs/ZONES.md",
+          "action": "create",
+          "what": "zone 子系统完整文档"
+        },
+        {
+          "path": "docs/DATA_MODEL.md",
+          "action": "modify",
+          "what": "zones/zone_members/zone_id 实体说明"
+        },
+        {
+          "path": "docs/API.md",
+          "action": "modify",
+          "what": "/zones*、/ingest/file、zone/crossZone 参数"
+        },
+        {
+          "path": "docs/MCP_TOOLS.md",
+          "action": "modify",
+          "what": "zone 参数与 AMEM_ZONE"
+        },
+        {
+          "path": "docs/DEPLOYMENT.md",
+          "action": "modify",
+          "what": "AMEM_WORKSPACE/AMEM_ZONE 环境变量"
+        },
+        {
+          "path": "docker/docker-compose.yml",
+          "action": "modify",
+          "what": "AMEM_WORKSPACE/AMEM_ZONE 环境变量透传"
+        },
+        {
+          "path": "docs/AUTH_WORKSPACES.md",
+          "action": "modify",
+          "what": "新增 zone 权限模型章节：zone_members 角色、personal/shared/inbox 可见性规则、token scope 保持 workspace 级（ACL 由存储层强制），与既有 PAT/OAuth 设计衔接"
+        }
+      ],
+      "subtasks": [
+        {
+          "id": "T12.1",
+          "description": "写 docs/ZONES.md"
+        },
+        {
+          "id": "T12.2",
+          "description": "更新 DATA_MODEL/API/MCP_TOOLS/DEPLOYMENT 文档"
+        },
+        {
+          "id": "T12.3",
+          "description": "compose 增加 env 透传"
+        },
+        {
+          "id": "T12.4",
+          "description": "pnpm test + build + smoke + docker 冒烟"
+        }
+      ],
+      "tests": [
+        {
+          "description": "pnpm test 全部通过（core 112+/db 20+/server 55+/mcp 6+/web 15+ 含新增）",
+          "kind": "integration"
+        },
+        {
+          "description": "docker compose build amem && up -d amem 后 /api/v1/health ok",
+          "kind": "e2e"
+        }
+      ],
+      "acceptance_criteria": [
+        "全部测试绿、构建通过、docker 冒烟通过",
+        "文档与实现一致"
+      ],
+      "depends_on": [
+        "T10",
+        "T11"
+      ],
+      "estimated_loc": 150,
+      "suggested_skills": []
     }
   ],
-  "order": ["T1", "T2"]
+  "order": [
+    "T1",
+    "T2",
+    "T3",
+    "T4",
+    "T5",
+    "T6",
+    "T8",
+    "T7",
+    "T9",
+    "T10",
+    "T11",
+    "T12"
+  ]
 }

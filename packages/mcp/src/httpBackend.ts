@@ -36,6 +36,7 @@ import type {
   NewAsset,
   NewUnit,
   Persona,
+  PipelineStage,
   PrecipitateResult,
   RecallInput,
   RecallResult,
@@ -298,6 +299,9 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
     },
     async activity(filter?: ActivityFilter): Promise<ActivityEvent[]> {
       return req('GET', `/activity${qs({ kind: filter?.kind, limit: filter?.limit })}`);
+    },
+    async pipeline(limit?: number): Promise<PipelineStage[]> {
+      return req('GET', `/pipeline${qs({ limit })}`);
     },
     async activitySummary(filter?: { hours?: number; limit?: number }): Promise<ActivitySummary> {
       return req('GET', `/activity/summary${qs({ hours: filter?.hours, limit: filter?.limit })}`);

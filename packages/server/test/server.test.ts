@@ -149,6 +149,33 @@ describe('Amem REST API', () => {
     expect(kinds).toContain('recall');
   });
 
+  it('GET /api/v1/pipeline returns real lifecycle stages for ingest + recall', async () => {
+    const ingest = await j('POST', '/api/v1/ingest', {
+      title: 'Pipeline seed',
+      content: 'Decision: every memory card must carry its real lifecycle stages. Procedure: record stages on ingest, save, curate and recall.',
+    });
+    expect(ingest.status).toBe(200);
+    const ingestBody = ingest.body as { trace: { id: string }; units: Array<{ id: string }> };
+
+    const before = await j('GET', '/api/v1/pipeline?limit=50');
+    const stagesBefore = before.body as Array<{ cardId: string; kind: string; createdAt: string }>;
+    const kindsBefore = stagesBefore.map((s) => s.kind);
+    expect(kindsBefore).toContain('ingested');
+    expect(kindsBefore).toContain('distilled');
+    const traceStage = stagesBefore.find((s) => s.cardId === ingestBody.trace.id);
+    expect(traceStage).toBeDefined();
+    expect(traceStage!.kind).toBe('ingested');
+
+    await j('POST', '/api/v1/recall', { query: 'real lifecycle stages', topK: 5 });
+    const after = await j('GET', '/api/v1/pipeline?limit=50');
+    const kindsAfter = (after.body as Array<{ kind: string }>).map((s) => s.kind);
+    expect(kindsAfter).toContain('recalled');
+
+    const capped = await j('GET', '/api/v1/pipeline?limit=2');
+    expect((capped.body as unknown[]).length).toBeLessThanOrEqual(2);
+    expect(capped.status).toBe(200);
+  });
+
   it('GET /api/v1/activity/summary aggregates input/output flow and accessed memory regions', async () => {
     await j('POST', '/api/v1/ingest', {
       title: 'Flow summary seed',

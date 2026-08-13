@@ -1,8 +1,5 @@
-iter	task	phase	tests	quality	pass	note
-0	-	baseline	193/193	-	-	clean baseline aa9be1a; storage optimizations committed
-1	T1	engineer	-	-	-	ActivitySummary domain type + AmemService.activitySummary + GET /api/v1/activity/summary
-1	T1	qa	195/195	min5	yes	2 integration tests; gate ok after fixing 2 pre-existing long comments; max_file_loc raised to 1800 (repo norm, files pre-existing >400)
-2	T2	engineer	-	-	-	types/api wiring + flow.ts helpers + Activity/Dashboard panels + App onOpenUnit + css
-2	T2	qa	202/202	min5	yes	7 flow.test.ts unit tests; typecheck clean; gate ok; T1+T2 regression green
-2	T2	keep	202/202	min5	yes	committed 8e448e5; mcp httpBackend fixed (53336fa) after full pnpm build surfaced missing activitySummary
-3	-	keep	202/202	-	-	docker image rebuilt + container recreated; /activity/summary verified 200 w/ PAT; UI bundle served; pushed master d32b9fc..53336fa; amem-loop unit_bb0cf0c1
+iter	phase	verdict	score	blocking	major	change
+0	build	-	-	-	-	first-principles decomposition: 12 tasks, 8 components (c1-c8), validator ok
+1	critique	revise	66	1	5	PE: T1 zone_id 默认值 'z_inbox' 与种子 id 方案冲突且 inbox 对成员不可见（blocking）；T6 缺 T4 依赖；createUnit 不持久化 zone_id；links/scenarios/assets 过滤语义未钉死；T7 非参数化 MCP 读工具作用域未声明；AUTH_WORKSPACES.md 未列入 T12
+2	revise	-	-	-	-	applied all fixes: T1 确定性种子 id+回填+inbox visibility；T2 createUnit/rowToUnit 持久化 zone_id；T3 links OR/assets AND 语义钉死；T6 deps+=T4；T7 非参数化读工具作用域+link_units 校验+get_graph 测试；T12+=AUTH_WORKSPACES.md；T5 异步 ctx+确定性测试；validator ok
+3	critique	pass	88	0	0	PE: 全部 blocking/major 已解决，仅剩 minor 措辞（已顺带修订）；覆盖完整、依赖图正确、可执行性高

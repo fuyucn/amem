@@ -2,3 +2,5 @@ iter	task	phase	tests	quality	pass	note
 0	-	baseline	193/193	-	-	clean baseline aa9be1a; storage optimizations committed
 1	T1	engineer	-	-	-	ActivitySummary domain type + AmemService.activitySummary + GET /api/v1/activity/summary
 1	T1	qa	195/195	min5	yes	2 integration tests; gate ok after fixing 2 pre-existing long comments; max_file_loc raised to 1800 (repo norm, files pre-existing >400)
+2	T2	engineer	-	-	-	types/api wiring + flow.ts helpers + Activity/Dashboard panels + App onOpenUnit + css
+2	T2	qa	202/202	min5	yes	7 flow.test.ts unit tests; typecheck clean; gate ok; T1+T2 regression green

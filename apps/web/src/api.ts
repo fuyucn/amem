@@ -1,5 +1,6 @@
 import type {
   ActivityEvent,
+  ActivitySummary,
   AiProvider,
   AiStatus,
   Asset,
@@ -158,6 +159,8 @@ export const api = {
   stats: () => request<Stats>('/stats'),
   activity: (f: { kind?: string; limit?: number } = {}) =>
     request<ActivityEvent[]>(`/activity${qs(f)}`),
+  activitySummary: (f: { hours?: number; limit?: number } = {}) =>
+    request<ActivitySummary>(`/activity/summary${qs(f)}`),
   graph: (clusters = true, scenarios = true) =>
     request<Graph>(`/graph${qs({ clusters: clusters ? 1 : 0, scenarios: scenarios ? 1 : 0 })}`),
   units: (f: { type?: string; status?: string; tag?: string; category?: string; limit?: number } = {}) =>

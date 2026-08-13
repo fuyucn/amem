@@ -204,3 +204,25 @@ export interface ActivityEvent {
   meta?: Record<string, unknown>;
   createdAt: string;
 }
+
+export interface ActivitySummary {
+  window: { events: number; hours: number; since: string };
+  input: { total: number; byKind: Record<string, number>; unitsCreated: number };
+  output: { total: number; byKind: Record<string, number>; tokensDelivered: number; budgetUsed: number; tokenSavings: number };
+  accessedUnits: Array<{
+    unitId: string;
+    title: string;
+    type: string;
+    category: string;
+    tags: string[];
+    accessCount: number;
+    lastAccessedAt: string;
+    actors: string[];
+  }>;
+  regions: {
+    byType: Array<{ key: string; count: number }>;
+    byCategory: Array<{ key: string; count: number }>;
+    byTag: Array<{ key: string; count: number }>;
+  };
+  topActors: Array<{ actor: string; writes: number; reads: number }>;
+}

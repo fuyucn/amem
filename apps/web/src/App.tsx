@@ -228,7 +228,7 @@ export function App() {
       <main className="main">
         <div className="wrap" key={ws}>
           {tab === 'dashboard' && <Dashboard />}
-          {tab === 'activity' && <Activity />}
+          {tab === 'activity' && <Activity onOpenUnit={(id) => go('units', id)} />}
           {tab === 'graph' && <GraphView onOpenUnit={(id) => go('units', id)} />}
           {tab === 'search' && <Search key={searchQuery} initialQuery={searchQuery} />}
           {tab === 'units' && (

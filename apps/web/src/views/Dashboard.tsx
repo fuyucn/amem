@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import type { ActivityEvent, Stats } from '../types';
+import type { ActivityEvent, ActivitySummary, Stats } from '../types';
+import { unitPath } from '../router';
+import { accessRows, flowCards } from '../flow';
 
 function relTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -17,17 +19,20 @@ function relTime(iso: string): string {
 export function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [summary, setSummary] = useState<ActivitySummary | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api.stats(), api.activity({ limit: 12 })])
-      .then(([s, a]) => { setStats(s); setEvents(a); })
+    Promise.all([api.stats(), api.activity({ limit: 12 }), api.activitySummary({ hours: 24 }).catch(() => null)])
+      .then(([s, a, sm]) => { setStats(s); setEvents(a); setSummary(sm); })
       .catch((e) => setError(String(e.message ?? e)));
   }, []);
 
   if (error) return <div className="panel">Failed to load stats: {error}</div>;
   if (!stats) return <div className="panel">Loading…</div>;
   const c = stats.counts;
+  const flow = summary ? flowCards(summary) : null;
+  const accessed = accessRows(summary, 5);
   const maxUnits = Math.max(1, ...stats.perDay.map((d) => d.units));
   const maxTraces = Math.max(1, ...stats.perDay.map((d) => d.traces));
   const typeTotal = Object.values(stats.byType).reduce((a, b) => a + b, 0) || 1;
@@ -82,6 +87,39 @@ export function Dashboard() {
           ))}
         </div>
       </div>
+
+      {flow && (
+        <div className="panel">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <h3 style={{ margin: 0 }}>Agent memory access</h3>
+            <span className="muted">last {summary?.window.hours}h</span>
+          </div>
+          <div className="cards" style={{ marginTop: 10 }}>
+            {flow.map((f) => (
+              <div className="card" key={f.id}>
+                <div className="num">{f.value.toLocaleString()}</div>
+                <div className="lbl">{f.label}</div>
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{f.detail}</div>
+              </div>
+            ))}
+          </div>
+          <h4 style={{ margin: '14px 0 6px' }}>Units hit by recall/search</h4>
+          {accessed.length === 0 ? (
+            <div className="muted">No recalls/searches yet — Codex calls `recall` at session start.</div>
+          ) : (
+            <ul className="dots" style={{ marginTop: 6 }}>
+              {accessed.map((u) => (
+                <li key={u.unitId}>
+                  <a className="unit-link" href={unitPath(u.unitId)}>
+                    <span className="badge">{u.type}</span> <b>{u.title}</b>
+                    <span className="muted"> · {u.accessCount}x</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <div className="panel">
         <h3>Recent activity</h3>

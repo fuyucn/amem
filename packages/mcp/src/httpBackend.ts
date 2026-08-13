@@ -6,6 +6,7 @@
 import type {
   ActivityEvent,
   ActivityFilter,
+  ActivitySummary,
   AmemService,
   Asset,
   AssetCallResult,
@@ -297,6 +298,9 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
     },
     async activity(filter?: ActivityFilter): Promise<ActivityEvent[]> {
       return req('GET', `/activity${qs({ kind: filter?.kind, limit: filter?.limit })}`);
+    },
+    async activitySummary(filter?: { hours?: number; limit?: number }): Promise<ActivitySummary> {
+      return req('GET', `/activity/summary${qs({ hours: filter?.hours, limit: filter?.limit })}`);
     },
     async getTraces(filter?: { sessionId?: SessionId; limit?: number }): Promise<Trace[]> {
       return req('GET', `/traces${qs({ sessionId: filter?.sessionId, limit: filter?.limit })}`);

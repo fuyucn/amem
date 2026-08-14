@@ -77,6 +77,27 @@ describe('SqliteStorage', () => {
     await storage.close();
   });
 
+  it('updateUnitEmbedding refreshes only the vector', async () => {
+    const storage = await createSqliteStorageFromPath(tmpDb('emb2.db'));
+    await storage.createUnit(
+      unit({
+        id: 'u1',
+        title: 'Keep me',
+        embedding: { dims: 3, values: [0.1, 0.2, 0.3] },
+      }),
+    );
+    await storage.updateUnitEmbedding('u1', {
+      dims: 2,
+      values: [0.5, -0.5],
+    });
+    const after = (await storage.getUnit('u1'))!;
+    expect(after.title).toBe('Keep me');
+    expect(after.embedding!.dims).toBe(2);
+    expect(after.embedding!.values[0]).toBeCloseTo(0.5, 5);
+    expect(after.embedding!.values[1]).toBeCloseTo(-0.5, 5);
+    await storage.close();
+  });
+
   it('links: create, upsert, get, all, unique', async () => {
     const storage = await createSqliteStorageFromPath(tmpDb('link.db'));
     await storage.createUnit(unit());
@@ -257,6 +278,43 @@ describe('SqliteStorage', () => {
     const p = (await s2.listProviders())[0]!;
     expect(p.apiKey).toBeUndefined();
     await s2.close();
+  });
+
+  it('ocr_settings: singleton CRUD with encrypted key roundtrip', async () => {
+    const storage = await createSqliteStorageFromPath(tmpDb('ocr.db'), 'test-secret-16-chars');
+    expect(await storage.getOcrSettings()).toBeNull();
+
+    const created = await storage.upsertOcrSettings({
+      baseUrl: 'https://ocr.example.com/v1/',
+      model: 'vision-model',
+      apiKey: 'sk-ocr-secret-123456',
+      minChars: 80,
+    });
+    expect(created.baseUrl).toBe('https://ocr.example.com/v1');
+    expect(created.model).toBe('vision-model');
+    expect(created.apiKey).toBe('sk-ocr-secret-123456');
+    expect(created.minChars).toBe(80);
+
+    // Key is encrypted at rest (raw key must not appear in the row).
+    const raw = (storage as unknown as { db: import('better-sqlite3').Database }).db
+      .prepare('SELECT api_key FROM ocr_settings WHERE id = 1')
+      .get() as { api_key: string };
+    expect(raw.api_key).not.toContain('sk-ocr-secret-123456');
+    expect(raw.api_key.startsWith('enc:v1:')).toBe(true);
+
+    // Update without apiKey preserves the stored key; minChars clamps to >= 0.
+    const updated = await storage.upsertOcrSettings({
+      baseUrl: 'https://ocr.example.com/v1',
+      model: 'vision-model-2',
+      minChars: -5,
+    });
+    expect(updated.model).toBe('vision-model-2');
+    expect(updated.minChars).toBe(0);
+    expect(updated.apiKey).toBe('sk-ocr-secret-123456');
+
+    await storage.deleteOcrSettings();
+    expect(await storage.getOcrSettings()).toBeNull();
+    await storage.close();
   });
 
   it('L2 scenarios: CRUD + tag filter', async () => {
@@ -486,6 +544,51 @@ describe('SqliteStorage', () => {
       expect((await storage.listScenarios({})).length).toBe(1);
       expect((await storage.getScenario('scn_a'))!.title).toBe('A secret scenario');
       expect(await storage.getScenario('scn_b')).toBeNull();
+    });
+    await storage.close();
+  });
+
+  it('pipeline stages: record, list newest-first, workspace isolation', async () => {
+    const storage = await createSqliteStorageFromPath(tmpDb('pipeline.db'));
+    const ctxA = {
+      workspaceId: 'ws_a', workspaceSlug: 'a', scopes: ['read', 'write', 'admin'],
+      realm: 'user' as const, authEnabled: true,
+    };
+    const ctxB = {
+      workspaceId: 'ws_b', workspaceSlug: 'b', scopes: ['read', 'write', 'admin'],
+      realm: 'user' as const, authEnabled: true,
+    };
+
+    await runWithRequestContextAsync(ctxA, async () => {
+      await storage.recordPipelineStage({
+        cardId: 'trace_1', cardTitle: 'Sprint review', kind: 'ingested',
+        actor: 'codex', meta: { unitIds: ['u1'] },
+      });
+      await storage.recordPipelineStage({ cardId: 'u1', cardTitle: 'Decision: use Postgres', kind: 'distilled' });
+      await storage.recordPipelineStage({ cardId: 'u1', cardTitle: 'Decision: use Postgres', kind: 'curated', meta: { linksCreated: 2 } });
+      await storage.recordPipelineStage({ cardId: 'u2', cardTitle: 'Lesson: rate limit', kind: 'stored' });
+
+      const list = await storage.listPipeline(10);
+      expect(list.length).toBe(4);
+      // Newest first (same-ms ties fall back to insertion order via rowid).
+      expect(list[0]!.cardId).toBe('u2');
+      expect(list[1]!.kind).toBe('curated');
+      expect(list[3]!.cardId).toBe('trace_1');
+      expect(list[1]!.meta).toEqual({ linksCreated: 2 });
+      expect((await storage.listPipeline(2)).length).toBe(2);
+    });
+
+    // Workspace B sees none of A's stages and can write its own.
+    await runWithRequestContextAsync(ctxB, async () => {
+      expect(await storage.listPipeline(10)).toEqual([]);
+      await storage.recordPipelineStage({ cardId: 'uB', cardTitle: 'B card', kind: 'stored' });
+      const bList = await storage.listPipeline(10);
+      expect(bList.length).toBe(1);
+      expect(bList[0]!.cardId).toBe('uB');
+    });
+
+    await runWithRequestContextAsync(ctxA, async () => {
+      expect((await storage.listPipeline(10)).length).toBe(4);
     });
     await storage.close();
   });

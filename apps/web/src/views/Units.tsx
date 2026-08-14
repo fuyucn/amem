@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import type { Link, Unit, UnitSummary } from '../types';
+import { PageHead } from '../components/PageHead';
+import { ZoneFilter } from '../components/ZoneFilter';
+import type { Link, Unit, UnitSummary, Zone } from '../types';
 
 const CATEGORIES = ['code', 'infra', 'workflow', 'product', 'personal', 'research', 'meta', 'other'] as const;
 const BATCH_ACTIONS: Array<{ action: 'archive' | 'restore' | 'delete' | 'accept'; label: string }> = [
@@ -13,9 +15,12 @@ const BATCH_ACTIONS: Array<{ action: 'archive' | 'restore' | 'delete' | 'accept'
 interface UnitsProps {
   unitId?: string | null;
   onSelectUnit?: (id: string) => void;
+  zones?: Zone[];
+  zone?: string;
+  onZoneChange?: (zoneId: string) => void;
 }
 
-export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
+export function Units({ unitId = null, onSelectUnit, zones = [], zone = '', onZoneChange }: UnitsProps) {
   const [units, setUnits] = useState<UnitSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(unitId);
   const [unit, setUnit] = useState<Unit | null>(null);
@@ -27,17 +32,18 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
   const [busy, setBusy] = useState(false);
   const [limit] = useState(50);
   const [showNew, setShowNew] = useState(false);
+  const [moveZone, setMoveZone] = useState('');
 
   const [form, setForm] = useState({ type: 'fact', title: '', summary: '', body: '', tags: '' });
 
   const load = () =>
-    api.units({ status, category: category === 'unclassified' ? '' : category, limit })
+    api.units({ status, category: category === 'unclassified' ? '' : category, limit, zone: zone || undefined })
       .then((list) => {
         setUnits(category === 'unclassified' ? list.filter((u) => !u.category) : list);
         setSelected(new Set());
       })
       .catch((e) => setError(String(e.message ?? e)));
-  useEffect(() => { load(); }, [status, category, limit]);
+  useEffect(() => { load(); }, [status, category, limit, zone]);
 
   useEffect(() => {
     setSelectedId(unitId);
@@ -71,6 +77,21 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
     await api.deleteUnit(unit.id);
     setSelectedId(null); load();
     onSelectUnit?.('');
+  };
+
+  const moveZoneOf = async (zoneRef: string) => {
+    if (!unit || !zoneRef) return;
+    await api.moveUnitZone(unit.id, zoneRef);
+    setUnit({ ...unit, zoneId: zoneRef });
+    setMoveZone('');
+    load();
+  };
+
+  const zoneName = (id?: string): string => {
+    const zoneId = id ?? '';
+    if (!zoneId) return '';
+    const z = zones.find((x) => x.id === zoneId);
+    return z ? z.name || z.slug : (zoneId.replace(/^z_/, '').split('_ws_')[0] ?? '');
   };
 
   const setCategoryOf = async (id: string, cat: string) => {
@@ -124,7 +145,12 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
   };
 
   return (
-    <div className="grid" style={{ gridTemplateColumns: '340px 1fr' }}>
+    <div>
+      <PageHead
+        title="Units"
+        sub="Atomic memories — one idea each, auto-tagged and linked by curate. Select units to batch-manage."
+      />
+      <div className="grid" style={{ gridTemplateColumns: '340px 1fr' }}>
       <div className="panel">
         <div className="row">
           <b>Units</b>
@@ -139,6 +165,7 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
             <option value="unclassified">unclassified</option>
             {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
+          <ZoneFilter zones={zones} value={zone} onChange={onZoneChange ?? (() => undefined)} />
           <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setShowNew((v) => !v)}>+ New</button>
         </div>
         <div className="row" style={{ marginTop: 6 }}>
@@ -167,6 +194,11 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
           </form>
         )}
         {error && <div className="muted">{error}</div>}
+        {units.length === 0 && (
+          <div className="empty-note" style={{ marginTop: 10 }}>
+            No units match this filter yet. Ingest material or write memory from Codex, then come back.
+          </div>
+        )}
         <ul className="dots">
           {units.map((u) => {
             const cat = u.category ?? '';
@@ -181,9 +213,14 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
                 />
                 <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => select(u.id)}>
                   <span className="badge">{u.type}</span>
-                  {cat && <span className="badge" style={{ background: 'var(--accent2)' }}>{cat}</span>}
+                  {cat && <span className="badge badge-cat">{cat}</span>}
                   {' '}{u.title}
                   <div className="muted">{u.summary}</div>
+                  <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+                    {u.workspaceId ? `ws:${u.workspaceId.replace(/^ws_/, '')}` : ''}
+                    {u.zoneId ? ` · zone:${zoneName(u.zoneId)}` : ''}
+                    {u.createdByUserId ? ` · by:${u.createdByUserId.replace(/^user_/, '').slice(0, 8)}` : ''}
+                  </div>
                 </div>
               </li>
             );
@@ -198,10 +235,23 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
             <div className="row">
               <h3 style={{ margin: 0 }}>{unit.title}</h3>
               <span className="badge">{unit.type}</span>
-              {typeof unit.labels?.category === 'string' && <span className="badge" style={{ background: 'var(--accent2)' }}>{unit.labels.category}</span>}
+              {typeof unit.labels?.category === 'string' && <span className="badge badge-cat">{unit.labels.category}</span>}
               <span className="badge">{unit.form}</span>
               <span className="badge">{unit.status}</span>
               <span className="badge">v{unit.version}</span>
+            </div>
+            <div className="row" style={{ marginTop: 4 }}>
+              {unit.workspaceId && <span className="badge badge-zone">ws:{unit.workspaceId.replace(/^ws_/, '')}</span>}
+              {unit.zoneId && <span className="badge badge-zone">zone:{zoneName(unit.zoneId)}</span>}
+              {unit.createdByUserId && <span className="badge">by:{unit.createdByUserId.replace(/^user_/, '').slice(0, 8)}</span>}
+            </div>
+            <div className="row" style={{ marginTop: 6 }}>
+              <span className="muted">Move to zone:</span>
+              <select value={moveZone} onChange={(e) => setMoveZone(e.target.value)}>
+                <option value="">choose…</option>
+                {zones.map((z) => <option key={z.id} value={z.id}>{z.name || z.slug}</option>)}
+              </select>
+              <button className="btn" disabled={!moveZone} onClick={() => moveZoneOf(moveZone)}>Move</button>
             </div>
             <div className="row" style={{ marginTop: 6 }}>
               <span className="muted">Category:</span>
@@ -231,6 +281,7 @@ export function Units({ unitId = null, onSelectUnit }: UnitsProps) {
             </ul>
           </>
         )}
+      </div>
       </div>
     </div>
   );

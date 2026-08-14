@@ -10,7 +10,7 @@ import {
   type Unit,
   type UnitSource,
 } from '../src/index.js';
-import { FakeStorage, iso, makeUnit } from './helpers.js';
+import { FakeStorage, iso, makeUnit, seedDefaultZones } from './helpers.js';
 
 function testConfig(): AmemConfig {
   return mergeConfig({
@@ -174,6 +174,7 @@ describe('service.autoPrecipitate', () => {
 describe('auto-precipitation after ingest', () => {
   it('runs fast precipitation when enabled and new units were ingested', async () => {
     const storage = new FakeStorage();
+    await seedDefaultZones(storage);
     const cfg = testConfig();
     cfg.autoPrecipitate = { enabled: true, mode: 'fast', minIntervalMs: 0 };
     const service = await createService(cfg, storage);
@@ -192,6 +193,7 @@ describe('auto-precipitation after ingest', () => {
 
   it('does not run when disabled', async () => {
     const storage = new FakeStorage();
+    await seedDefaultZones(storage);
     const cfg = testConfig();
     cfg.autoPrecipitate = { enabled: false, mode: 'fast' };
     const service = await createService(cfg, storage);
@@ -206,6 +208,7 @@ describe('auto-precipitation after ingest', () => {
 
   it('respects the min-interval throttle', async () => {
     const storage = new FakeStorage();
+    await seedDefaultZones(storage);
     const cfg = testConfig();
     cfg.autoPrecipitate = { enabled: true, mode: 'fast', minIntervalMs: 3_600_000 };
     const service = await createService(cfg, storage);

@@ -8,10 +8,12 @@ import type {
   AssetKind,
   AssetStatus,
   Graph, IngestResult, Link, RecallResult, SearchResult, Stats, Trace,
-  Unit, UnitSummary, Version, WorkingMemory,
+  OcrSettings, Unit, UnitSummary, Version, WorkingMemory,
   Scenario, ScenarioStatus, Persona,
   LayeredRecallResult, LayerRefreshResult, SkillExtractResult, AssetExtractResult,
   PrecipitateResult, ImportSourcesResult,
+  PipelineStage,
+  Zone, ZoneKind, ZoneMember, ZoneMemberRole, ZoneVisibility,
 } from './types';
 import { authHeaders, getToken, setToken, getWorkspaceSlug, setWorkspaceSlug } from './auth';
 
@@ -44,6 +46,19 @@ const qs = (params: Record<string, string | number | undefined>) => {
   const q = s.toString();
   return q ? `?${q}` : '';
 };
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('failed to read file'));
+    reader.onload = () => {
+      const url = String(reader.result ?? '');
+      const comma = url.indexOf(',');
+      resolve(comma >= 0 ? url.slice(comma + 1) : url);
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 export type Me = {
   realm: string;
@@ -139,13 +154,13 @@ export const api = {
 
   ingest: (body: { title: string; content: string; contentType?: string; sourceUri?: string; sessionId?: string; autoReview?: boolean }) =>
     request<IngestResult>('/ingest', { method: 'POST', body: JSON.stringify(body) }),
-  recall: (body: { query: string; tokenBudget?: number; topK?: number }) =>
+  recall: (body: { query: string; tokenBudget?: number; topK?: number; zone?: string }) =>
     request<RecallResult>('/recall', { method: 'POST', body: JSON.stringify(body) }),
-  recallLayered: (body: { query: string; tokenBudget?: number; topK?: number }) =>
+  recallLayered: (body: { query: string; tokenBudget?: number; topK?: number; zone?: string }) =>
     request<LayeredRecallResult>('/recall/layered', { method: 'POST', body: JSON.stringify(body) }),
   search: (
     query: string,
-    f: { limit?: number; offset?: number; type?: string; category?: string; tag?: string; status?: string; fullText?: boolean } = {},
+    f: { limit?: number; offset?: number; type?: string; category?: string; tag?: string; status?: string; fullText?: boolean; zone?: string } = {},
   ) => request<SearchResult>(`/search${qs({
     q: query,
     limit: f.limit,
@@ -155,15 +170,18 @@ export const api = {
     tag: f.tag,
     status: f.status,
     fullText: f.fullText ? 1 : undefined,
+    zone: f.zone,
   })}`),
   stats: () => request<Stats>('/stats'),
   activity: (f: { kind?: string; limit?: number } = {}) =>
     request<ActivityEvent[]>(`/activity${qs(f)}`),
+  pipeline: (f: { limit?: number } = {}) =>
+    request<PipelineStage[]>(`/pipeline${qs(f)}`),
   activitySummary: (f: { hours?: number; limit?: number } = {}) =>
     request<ActivitySummary>(`/activity/summary${qs(f)}`),
   graph: (clusters = true, scenarios = true) =>
     request<Graph>(`/graph${qs({ clusters: clusters ? 1 : 0, scenarios: scenarios ? 1 : 0 })}`),
-  units: (f: { type?: string; status?: string; tag?: string; category?: string; limit?: number } = {}) =>
+  units: (f: { type?: string; status?: string; tag?: string; category?: string; limit?: number; zone?: string } = {}) =>
     request<UnitSummary[]>(`/units${qs(f)}`),
   unit: (id: string) => request<Unit>(`/units/${id}`),
   versions: (id: string) => request<Version[]>(`/units/${id}/versions`),
@@ -171,6 +189,11 @@ export const api = {
   createUnit: (unit: Partial<Unit>) => request<Unit>('/units', { method: 'POST', body: JSON.stringify({ unit }) }),
   updateUnit: (id: string, patch: Partial<Unit>, reason?: string) =>
     request<Unit>(`/units/${id}`, { method: 'PATCH', body: JSON.stringify({ patch, reason }) }),
+  moveUnitZone: (id: string, zoneRef: string) =>
+    request<{ ok: boolean; unitId: string; zoneId: string; zoneSlug: string }>(`/units/${id}/zone`, {
+      method: 'POST',
+      body: JSON.stringify({ zoneId: zoneRef }),
+    }),
   deleteUnit: (id: string) => request<void>(`/units/${id}`, { method: 'DELETE' }),
   reviewUnit: (id: string, action: 'accept' | 'discard') =>
     request<Unit | null>(`/units/${id}/review`, { method: 'POST', body: JSON.stringify({ action }) }),
@@ -216,6 +239,18 @@ export const api = {
     request<ImportSourcesResult>('/import/codebase', { method: 'POST', body: JSON.stringify(body) }),
   importSessions: (body: { path: string; format?: string; sessionLabel?: string; extract?: boolean }) =>
     request<ImportSourcesResult>('/import/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  importPdf: (body: { filename: string; contentBase64: string; extract?: boolean; zone?: string }) =>
+    request<ImportSourcesResult>('/import/pdf', { method: 'POST', body: JSON.stringify(body) }),
+  uploadFile: async (file: File, zone?: string) =>
+    request<ImportSourcesResult>('/ingest/file', {
+      method: 'POST',
+      body: JSON.stringify({
+        filename: file.name,
+        contentBase64: await fileToBase64(file),
+        extract: true,
+        zone,
+      }),
+    }),
   providers: () => request<{ providers: AiProvider[] }>('/providers').then((r) => r.providers),
   createProvider: (body: {
     name: string;
@@ -253,4 +288,45 @@ export const api = {
       { method: 'POST', body: JSON.stringify({}) },
     ),
   aiStatus: () => request<AiStatus>('/ai/status'),
+  ocrSettings: () =>
+    request<{ settings: OcrSettings | null }>('/ocr/settings').then((r) => r.settings),
+  saveOcrSettings: (body: { baseUrl: string; model: string; apiKey?: string; minChars?: number }) =>
+    request<{ settings: OcrSettings }>('/ocr/settings', { method: 'PUT', body: JSON.stringify(body) }).then(
+      (r) => r.settings,
+    ),
+  clearOcrSettings: () =>
+    request<{ settings: null }>('/ocr/settings', { method: 'DELETE' }).then((r) => r.settings),
+
+  // Workspace partitions (zones).
+  zones: () => request<Zone[]>('/zones'),
+  createZone: (body: {
+    slug: string;
+    name?: string;
+    kind?: ZoneKind;
+    visibility?: ZoneVisibility;
+    description?: string;
+  }) => request<Zone>('/zones', { method: 'POST', body: JSON.stringify(body) }),
+  updateZone: (
+    id: string,
+    body: Partial<{
+      name: string;
+      visibility: ZoneVisibility;
+      description: string;
+      status: 'active' | 'archived';
+    }>,
+  ) => request<Zone>(`/zones/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteZone: (id: string) =>
+    request<{ ok: boolean; zoneId: string }>(`/zones/${id}`, { method: 'DELETE' }),
+  zoneMembers: (id: string) => request<ZoneMember[]>(`/zones/${id}/members`),
+  addZoneMember: (id: string, body: { userId?: string; email?: string; role?: ZoneMemberRole }) =>
+    request<{ ok: boolean; zoneId: string; userId: string; role: ZoneMemberRole }>(
+      `/zones/${id}/members`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  removeZoneMember: (id: string, userId: string) =>
+    request<{ ok: boolean }>(`/zones/${id}/members/${userId}`, { method: 'DELETE' }),
+  recomputeZones: () => request<{ updated: number; skippedOffline: boolean }>('/zones/recompute', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }),
 };

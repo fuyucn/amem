@@ -12,9 +12,11 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
+import { extractText, getDocumentProxy, renderPageAsImage } from 'unpdf';
 import type {
   ImportCodebaseInput,
   ImportDirInput,
+  ImportPdfInput,
   ImportSessionsInput,
   ImportSourcesResult,
   IngestInput,
@@ -25,6 +27,7 @@ import type {
   Unit,
   UnitId,
 } from './domain.js';
+import type { OcrClient } from './ocr.js';
 import type { Storage } from './store.js';
 import { nowIso } from './lib/util.js';
 
@@ -38,11 +41,18 @@ export interface ImporterDeps {
     relation: LinkRelation;
     reason?: string;
   }) => Promise<Link>;
+  /** Optional OCR back-end for scanned PDFs; null disables the fallback. */
+  ocr?: OcrClient | null;
+  /** Text-layer length below which a PDF is treated as a scan. */
+  ocrMinChars?: number;
 }
 
 const DEFAULT_DOC_EXTS = ['.md', '.markdown', '.txt'];
 const DEFAULT_MAX_FILES = 300;
 const MAX_BYTES = 512 * 1024;
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
+const PDF_CHUNK_BYTES = 4000;
+const OCR_PAGE_SCALE = 1.5;
 const MAX_CODE_FILES = 500;
 const MAX_SYMBOLS_PER_FILE = 60;
 
@@ -122,6 +132,121 @@ export async function importDirectory(
   }
   links = await relink(deps, files.length);
   return { units, traces, links, sources, files: files.length, sessions: 0, tokensSavedByDedup };
+}
+
+/**
+ * Import a single PDF: in-process text extraction (unpdf, pure JS) -> chunks
+ * -> ingest. Scanned PDFs (no text layer) fall back to OCR when an OCR client
+ * is configured. Self-local: bytes never leave the instance.
+ */
+export async function importPdf(
+  deps: ImporterDeps,
+  input: ImportPdfInput,
+): Promise<ImportSourcesResult> {
+  const maxBytes = input.maxBytes ?? MAX_PDF_BYTES;
+  if (input.contentBase64.length > Math.ceil(maxBytes / 3) * 4 + 16) {
+    throw new Error(`PDF too large: max ${maxBytes} bytes`);
+  }
+  const bytes = Buffer.from(input.contentBase64, 'base64');
+  if (!bytes.length || bytes.length > maxBytes) {
+    throw new Error(`PDF too large or empty: ${bytes.length} bytes`);
+  }
+
+  const { text } = await extractText(new Uint8Array(bytes), { mergePages: true });
+  let plain = text.replaceAll('\u0000', '').trim();
+  const minChars = deps.ocrMinChars ?? 60;
+  let ocrPages = 0;
+  if (plain.length < minChars) {
+    if (deps.ocr) {
+      const recovered = await ocrScannedPdf(bytes, deps.ocr);
+      if (recovered.text) {
+        plain = recovered.text;
+        ocrPages = recovered.pages;
+      }
+    }
+  }
+  if (!plain) {
+    return { units: 0, traces: 0, links: 0, sources: 0, files: 1, sessions: 0, tokensSavedByDedup: 0 };
+  }
+
+  const chunks = chunkPdfText(plain, PDF_CHUNK_BYTES);
+  let units = 0;
+  let tokensSavedByDedup = 0;
+  const stem = input.filename.replace(/\.pdf$/i, '');
+
+  for (const [index, chunk] of chunks.entries()) {
+    const result = await deps.ingest({
+      title: chunks.length > 1 ? `${stem} · §${index + 1}/${chunks.length}` : stem,
+      content: chunk,
+      contentType: 'text/plain',
+      sourceUri: input.filename,
+      sourceKind: 'file',
+      extract: input.extract ?? true,
+      autoLink: false,
+      zoneId: input.zone,
+    });
+    units += result.units.length;
+    tokensSavedByDedup += result.tokensSavedByDedup;
+  }
+
+  return {
+    units,
+    traces: 1,
+    links: 0,
+    sources: chunks.length,
+    files: 1,
+    sessions: 0,
+    tokensSavedByDedup,
+    ...(ocrPages > 0 ? { ocrPages } : {}),
+  };
+}
+
+/**
+ * Render every page to a PNG (via @napi-rs/canvas) and ask the OCR client to
+ * transcribe it. Returns the concatenated Markdown, or '' when nothing could
+ * be recovered. Page images are posted in-memory and never persisted.
+ */
+async function ocrScannedPdf(
+  bytes: Buffer,
+  ocr: OcrClient,
+): Promise<{ text: string; pages: number }> {
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const pages: string[] = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    const png = await renderPageAsImage(new Uint8Array(bytes), pageNumber, {
+      scale: OCR_PAGE_SCALE,
+      canvasImport: () => import('@napi-rs/canvas'),
+    });
+    const base64 = Buffer.from(png).toString('base64');
+    const markdown = (await ocr.recognize(base64, 'image/png')).trim();
+    if (markdown) pages.push(markdown);
+  }
+  return { text: pages.join('\n\n'), pages: pages.length };
+}
+
+function chunkPdfText(text: string, maxBytes: number): string[] {
+  const paragraphs = text
+    .split(/\n\s*\n/)
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter((p) => p.length >= 24);
+  if (paragraphs.length === 0) {
+    const flat = text.replace(/\s+/g, ' ').trim();
+    return flat.length >= 24 ? [flat.slice(0, maxBytes * 4)] : [];
+  }
+  const chunks: string[] = [];
+  let buf: string[] = [];
+  let size = 0;
+  for (const p of paragraphs) {
+    if (size + p.length > maxBytes && buf.length) {
+      chunks.push(buf.join('\n\n'));
+      buf = [];
+      size = 0;
+    }
+    buf.push(p);
+    size += p.length;
+  }
+  if (buf.length) chunks.push(buf.join('\n\n'));
+  return chunks;
 }
 
 async function relink(_deps: ImporterDeps, _files: number): Promise<number> {

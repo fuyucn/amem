@@ -10,7 +10,9 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
@@ -21,5 +23,9 @@
   "devDependencies": {
     "typescript": "^5.7.3",
     "vitest": "^3.0.4"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.100",
+    "unpdf": "^1.8.1"
   }
 }

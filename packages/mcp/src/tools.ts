@@ -93,6 +93,8 @@ export const toolSchemas = {
     extract: z.boolean().optional(),
     autoLink: z.boolean().optional(),
     autoReview: z.boolean().optional(),
+    /** Zone id or slug to partition the distilled units into (auto-assigned when absent). */
+    zone: z.string().optional(),
   }),
   compact: z.object({
     messages: z
@@ -108,16 +110,28 @@ export const toolSchemas = {
     tokenBudget: z.number().optional(),
     topK: z.number().optional(),
     includeBody: z.boolean().optional(),
+    /** Zone id or slug to restrict recall to (auto-routed by query when absent). */
+    zone: z.string().optional(),
+    /** true: skip zone auto-routing and search every accessible zone. */
+    crossZone: z.boolean().optional(),
   }),
   recall_layered: z.object({
     query: z.string(),
     tokenBudget: z.number().optional(),
     topK: z.number().optional(),
     includeBody: z.boolean().optional(),
+    /** Zone id or slug to restrict layered recall to (auto-routed by query when absent). */
+    zone: z.string().optional(),
+    /** true: skip zone auto-routing and assemble from every accessible zone. */
+    crossZone: z.boolean().optional(),
   }),
   search: z.object({
     query: z.string(),
     limit: z.number().optional(),
+    /** Zone id or slug to restrict search to (all accessible zones when absent). */
+    zone: z.string().optional(),
+    /** true: search across all accessible zones (default). Kept for API symmetry. */
+    crossZone: z.boolean().optional(),
   }),
   save_unit: z.object({
     unit: z.record(z.string(), z.unknown()),
@@ -133,6 +147,8 @@ export const toolSchemas = {
     status: z.enum(STATUSES).optional(),
     tag: z.string().optional(),
     limit: z.number().optional(),
+    /** Zone id or slug to filter units by. */
+    zone: z.string().optional(),
   }),
   link_units: z.object({
     sourceUnitId: z.string(),
@@ -257,18 +273,21 @@ export interface ToolDefinition {
 
 export const DESCRIPTIONS: Record<ToolName, string> = {
   ingest:
-    'Save a trace and distill atomic knowledge units into memory (with deduplication).',
+    'Save a trace and distill atomic knowledge units into memory (with deduplication). Pass zone (id or slug) to partition the extracted units into a specific zone.',
   compact:
     'Context offload: compress a long conversation (messages or content) into distilled units and return a compact replacement block that can stand in for the raw transcript in an agent prompt.',
   recall:
-    'Assemble a compact, cited context block from memory for prompt injection.',
+    'Assemble a compact, cited context block from memory for prompt injection. Pass zone (id or slug) to restrict recall to one partition, or crossZone=true to skip auto-routing and search every accessible zone. When AMEM_ZONE is set, all read tools (get_graph, working_memory, etc.) are scoped to that zone via the request context.',
   recall_layered:
-    'Layered recall (L3 persona + L2 scenario blocks + L1 precise units) with token budgeting. Prefer for long-running sessions and project bootstrapping.',
-  search: 'Hybrid keyword + semantic search over the knowledge graph.',
-  save_unit: 'Manually write a knowledge unit (procedures, plans, facts).',
+    'Layered recall (L3 persona + L2 scenario blocks + L1 precise units) with token budgeting. Prefer for long-running sessions and project bootstrapping. Pass zone to restrict to one partition, or crossZone=true to assemble from every accessible zone.',
+  search:
+    'Hybrid keyword + semantic search over the knowledge graph. Pass zone (id or slug) to restrict search to one partition. Search always covers all accessible zones unless zone is given.',
+  save_unit:
+    'Manually write a knowledge unit (procedures, plans, facts). Set unit.zoneId (id or slug) to partition it explicitly.',
   get_unit: 'Read a single knowledge unit by id.',
   update_unit: 'Edit a unit, recording a bi-temporal version.',
-  list_units: 'Browse units, optionally filtered by type, status, or tag.',
+  list_units:
+    'Browse units, optionally filtered by type, status, tag, or zone (id or slug).',
   link_units: 'Manually cross-reference two units.',
   prune_links:
     'Trim auto-generated links so each unit keeps its strongest neighbors (bounded graph degree). Use dryRun to preview.',
@@ -312,7 +331,7 @@ export const DESCRIPTIONS: Record<ToolName, string> = {
     'Classify units into the category taxonomy (code/infra/workflow/product/personal/research/meta/other). Rule-based offline; mode=llm refines with the configured provider when available.',
   batch_units:
     'Batch manage units: archive, restore, delete, or accept a set of unit ids.',
-  curate: 'Run consolidation: link, promote crystals, and decay.',
+  curate: 'Run maintenance: fast = consolidation only (link, promote crystals, decay); full = also LLM-classify unclassified units.',
   stats: 'Counts and token-savings metrics.',
   activity:
     'Recent memory activity: newly ingested/saved knowledge and recall/search usage. Use to confirm what was written and what was used.',
@@ -344,6 +363,7 @@ const executors: Record<ToolName, Executor> = {
       extract: optionalBool(a.extract),
       autoLink: optionalBool(a.autoLink),
       autoReview: optionalBool(a.autoReview),
+      zoneId: optionalStr(a.zone),
     });
   },
   async compact(service, a) {
@@ -363,6 +383,8 @@ const executors: Record<ToolName, Executor> = {
       tokenBudget: optionalNum(a.tokenBudget),
       topK: optionalNum(a.topK),
       includeBody: optionalBool(a.includeBody),
+      zone: optionalStr(a.zone),
+      crossZone: optionalBool(a.crossZone),
     });
   },
   async recall_layered(service, a) {
@@ -371,11 +393,15 @@ const executors: Record<ToolName, Executor> = {
       tokenBudget: optionalNum(a.tokenBudget),
       topK: optionalNum(a.topK),
       includeBody: optionalBool(a.includeBody),
+      zone: optionalStr(a.zone),
+      crossZone: optionalBool(a.crossZone),
     });
   },
   async search(service, a) {
     return service.search(String(a.query), {
       limit: optionalNum(a.limit),
+      zone: optionalStr(a.zone),
+      crossZone: optionalBool(a.crossZone),
     });
   },
   async save_unit(service, a) {
@@ -401,6 +427,7 @@ const executors: Record<ToolName, Executor> = {
       status: a.status === undefined ? undefined : (a.status as UnitStatus),
       tag: optionalStr(a.tag),
       limit: optionalNum(a.limit),
+      zoneId: optionalStr(a.zone),
     });
   },
   async link_units(service, a) {

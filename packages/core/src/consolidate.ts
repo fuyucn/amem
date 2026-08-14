@@ -1,4 +1,4 @@
-import type { AmemConfig, CurateReport, Unit } from './domain.js';
+import type { AmemConfig, CurateReport, Link, Unit } from './domain.js';
 import type { Storage } from './store.js';
 import type { Embedder } from './embedder.js';
 import { generateLinks } from './linkgen.js';
@@ -42,10 +42,13 @@ export async function consolidate(
 
   const pruned = new Set(prunedIds);
   const survivingLinks = allLinks.filter((l) => !pruned.has(l.id));
-  const { linksCreated, created } =
-    embed && !opts?.skipLinks
-      ? await generateLinks(storage, embed, config, { existingLinks: survivingLinks })
-      : { linksCreated: 0, created: [] };
+  let created: Link[] = [];
+  let linksCreated = 0;
+  if (embed && !opts?.skipLinks) {
+    const res = await generateLinks(storage, embed, config, { existingLinks: survivingLinks });
+    created = res.created;
+    linksCreated = res.linksCreated;
+  }
 
   // Importance via undirected degree centrality.
   const links = [...survivingLinks, ...created];
@@ -120,6 +123,18 @@ export async function consolidate(
   await storage.updateUnits(changed);
   await storage.markJob(jobId, 'done');
 
+  // Units this pass actually touched: promoted/decayed/archived units plus
+  // both endpoints of every newly created link.
+  const touchedMap = new Map<string, string>();
+  for (const u of changed) touchedMap.set(u.id, u.title);
+  for (const l of created) {
+    const a = byId.get(l.sourceUnitId);
+    const b = byId.get(l.targetUnitId);
+    if (a) touchedMap.set(a.id, a.title);
+    if (b) touchedMap.set(b.id, b.title);
+  }
+  const touched = [...touchedMap.entries()].map(([id, title]) => ({ id, title }));
+
   return {
     jobs: [jobId],
     linksCreated,
@@ -128,5 +143,6 @@ export async function consolidate(
     contradictionsFlagged,
     archived,
     summary: `consolidated: ${crystalsPromoted} crystal(s), ${linksCreated} link(s) created, ${linksPruned} link(s) pruned, ${archived} archived`,
+    touched,
   };
 }

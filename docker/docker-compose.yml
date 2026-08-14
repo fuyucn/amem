@@ -23,9 +23,18 @@ services:
       AMEM_AUTH_ENABLED: "${AMEM_AUTH_ENABLED:-false}"
       AMEM_BOOTSTRAP_ADMIN_EMAIL: "${AMEM_BOOTSTRAP_ADMIN_EMAIL:-admin@localhost}"
       AMEM_BOOTSTRAP_ADMIN_PASSWORD: "${AMEM_BOOTSTRAP_ADMIN_PASSWORD:-admin}"
+      # Default workspace + zone scope for MCP stdio / API clients started
+      # inside this container (e.g. `docker exec`). Leave empty for personal.
+      AMEM_WORKSPACE: "${AMEM_WORKSPACE:-}"
+      AMEM_ZONE: "${AMEM_ZONE:-}"
       AMEM_JOBS_ENABLED: "${AMEM_JOBS_ENABLED:-true}"
       # Auto-precipitate assets after every ingest (off | fast | auto | full).
       AMEM_AUTO_PRECIPITATE: "${AMEM_AUTO_PRECIPITATE:-fast}"
+      # OCR for scanned PDFs (OpenAI-compatible vision endpoint). Leave empty to skip scans.
+      AMEM_OCR_BASE_URL: "${AMEM_OCR_BASE_URL:-}"
+      AMEM_OCR_MODEL: "${AMEM_OCR_MODEL:-}"
+      AMEM_OCR_API_KEY: "${AMEM_OCR_API_KEY:-}"
+      AMEM_OCR_MIN_CHARS: "${AMEM_OCR_MIN_CHARS:-60}"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8321/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s

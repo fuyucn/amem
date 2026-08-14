@@ -11,6 +11,7 @@ describe('parsePath', () => {
     const paths: Array<[string, string]> = [
       ['/dashboard', 'dashboard'],
       ['/activity', 'activity'],
+      ['/zones', 'zones'],
       ['/graph', 'graph'],
       ['/search', 'search'],
       ['/units', 'units'],
@@ -20,7 +21,6 @@ describe('parsePath', () => {
       ['/persona', 'persona'],
       ['/working-memory', 'working-memory'],
       ['/review', 'review'],
-      ['/setup', 'setup'],
       ['/settings', 'settings'],
     ];
     for (const [path, tab] of paths) {

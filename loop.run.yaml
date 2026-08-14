@@ -1,14 +1,18 @@
 prompt: |
-  UI 数据流可视化：优化 Web UI，增加「当前数据流 输入/输出」的实时可视化反馈，并展示
-  「正在工作的 agent 访问的记忆区域」（recall/search/working_memory 命中哪些单元、哪些
-  类型/分类/标签区域、哪些 actor、消耗/节省多少 token）。
+  Zone（项目分区）子系统：在现有 account → workspace → 记忆/知识 之上增加 zone 层，实现
+  (1) 自动分区：同 workspace 下不同项目/域的知识自动归入对应 zone（个人 personal zone、共享
+  shared zone、项目 project zone、未分类 inbox），写入时自动分配（显式 zone > 规则 > 嵌入质心
+  > LLM > inbox），周期性重算质心并提议新 zone；(2) 权限隔离：zone 级 ACL，用户 A/B 同 workspace
+  下各自有个人 zone（仅自己可见）+ shared zone（全成员可见），B 不能访问 A 的个人 zone，存储层
+  强制过滤（请求上下文 accessibleZoneIds），token scope 保持 workspace 级；(3) recall 自动分区：
+  recall/search/recall_layered 自动路由到最相关 zone（质心+关键词+LLM），默认严格隔离
+  （crossZone=false），结果带 zone 标注；(4) 文件导入：支持 PDF/md/txt 上传 → 提取文本 → 分块
+  → 生成带 source 引用的 units → 自动分配 zone → review。需要 REST + MCP 工具支持
+  （AMEM_WORKSPACE / AMEM_ZONE 上下文），Web UI 增加 zones 管理页、zone 筛选器、文件导入、
+  单元 zone 徽标与迁移。保持现有测试全绿，Schema v14 → v15 平滑迁移。
 repo: .
 tasks_file: sandbox/tasks.json
+plan_file: sandbox/plan.md
 test_command: pnpm test
 sandbox_root: ./sandbox
-iter_strategy: branches
-pr_mode: none
-base_branch: master
-task_budget: 6
-patience: 2
-quality_thresholds: {max_comment_block: 8, max_comment_line_len: 100, max_func_loc: 60, max_nesting: 4, max_file_loc: 1800}
+budget: 5

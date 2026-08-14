@@ -17,6 +17,7 @@ import type {
   Graph,
   ImportCodebaseInput,
   ImportDirInput,
+  ImportPdfInput,
   ImportResult,
   ImportSessionsInput,
   ImportSourcesResult,
@@ -29,8 +30,10 @@ import type {
   NewUnit,
   NodeCluster,
   Persona,
+  PipelineStage,
   RecallInput,
   RecallResult,
+  RoutedZone,
   Scenario,
   ScenarioId,
   ScenarioStatus,
@@ -62,6 +65,7 @@ import type { Embedder } from './embedder.js';
 import { createEmbedder } from './embedder.js';
 import type { LlmClient } from './llm.js';
 import { createLlm } from './llm.js';
+import { createOcrClient } from './ocr.js';
 import { classifyUnitRuleBased, classifyUnits, type ClassifyReport } from './classify.js';
 import { AmemError, unitNotFound } from './errors.js';
 import { distillUnits } from './distill.js';
@@ -76,6 +80,7 @@ import { extractWiki } from './wiki.js';
 import {
   importCodebase as importCodebaseFn,
   importDirectory as importDirectoryFn,
+  importPdf as importPdfFn,
   importSessions as importSessionsFn,
   type ImporterDeps,
 } from './importer.js';
@@ -83,9 +88,12 @@ import { consolidate } from './consolidate.js';
 import { buildWorkingMemory } from './workingMemory.js';
 import { routeAssets as routeAssetsFn } from './route.js';
 import { countTokens } from './lib/tokenizer.js';
-import { cosine } from './lib/vector.js';
+import { cosine, EMBED_BODY_HEAD, hashUnitEmbed } from './lib/vector.js';
 import { newId, nowIso, snapshotOf, toUnitSummary } from './lib/util.js';
 import { detectCommunities, countCommunities, type CommunityEdge } from './lib/communities.js';
+import { accessibleZones, getZoneAccess, resolveExplicitZone, resolveZoneForWrite, type ZoneAccess } from './zones.js';
+import { currentZoneIds, requireRequestContext, runWithRequestContextAsync } from './requestContext.js';
+import type { RequestContext } from './requestContext.js';
 
 export interface ServiceDeps {
   llm?: LlmClient;
@@ -250,17 +258,52 @@ export function createService(
       }
     };
 
+    const emitPipeline = async (
+      kind: string,
+      cardId: string,
+      cardTitle: string,
+      meta?: Record<string, unknown>,
+      actor = 'amem',
+    ): Promise<void> => {
+      try {
+        await storage.recordPipelineStage({ kind, cardId, cardTitle, meta, actor });
+      } catch {
+        // pipeline is best-effort; never break the primary path
+      }
+    };
+
     const computeEmbedding = async (text: string): Promise<Unit['embedding']> => {
       const values = await embed.embed(text);
       return { dims: values.length, values };
     };
 
-    const saveUnitInner = async (unit: NewUnit): Promise<Unit> => {
+    /** Embed a unit with title-dominant composition (offline) or a compact
+     *  title+summary+body-head text (API) so long bodies don't drown out the
+     *  unit's identity in the retrieval space. */
+    const computeUnitEmbedding = async (
+      title: string,
+      summary: string | undefined,
+      body: string | undefined,
+    ): Promise<Unit['embedding']> => {
+      if (embed.mode === 'offline') {
+        const values = hashUnitEmbed({ title, summary, body }, await embed.dims());
+        return { dims: values.length, values };
+      }
+      const text = [title, summary ?? '', (body ?? '').slice(0, EMBED_BODY_HEAD)]
+        .filter(Boolean)
+        .join(' ');
+      return computeEmbedding(text);
+    };
+
+    const saveUnitInner = async (unit: NewUnit, opts: { zoneAccess?: ZoneAccess } = {}): Promise<Unit> => {
       const existing = unit.id ? await storage.getUnit(unit.id) : null;
       const now = nowIso();
       const embedding =
         unit.embedding ??
-        (await computeEmbedding([unit.title, unit.summary ?? '', unit.body ?? ''].filter(Boolean).join(' ')));
+        (await computeUnitEmbedding(unit.title, unit.summary, unit.body));
+      const zoneRouteText = [unit.title, unit.summary ?? '', (unit.body ?? '').slice(0, EMBED_BODY_HEAD)]
+        .filter(Boolean)
+        .join(' ');
       const labels = { ...(unit.labels ?? {}) };
       // Deterministic auto-classification keeps every new unit organized
       // without waiting for a batch classify pass.
@@ -271,6 +314,51 @@ export function createService(
           tags: unit.tags ?? [],
           labels,
         });
+      }
+      // Partition routing: explicit zone wins; new units without a zone get
+      // auto-assigned (explicit > rules > centroid > LLM > inbox); updates
+      // keep their existing zone.
+      let zoneId = unit.zoneId;
+      if (existing && !zoneId) zoneId = existing.zoneId;
+      if (!existing && !zoneId) {
+        const ctx = requireRequestContext();
+        const access = opts.zoneAccess ?? (await getZoneAccess(storage, ctx.userId));
+        let candidates = access.zones;
+        const scoped = currentZoneIds();
+        if (scoped) candidates = candidates.filter((z) => scoped.includes(z.id));
+        if (scoped && candidates.length === 1) {
+          // Explicit session scope (AMEM_ZONE / x-amem-zone header): the
+          // caller declared the partition they operate in, so new units route
+          // straight there instead of waiting on rules/LLM/inbox heuristics.
+          const only = candidates[0];
+          if (only) zoneId = only.id;
+        } else {
+          const resolved = await resolveZoneForWrite({
+            storage,
+            embed,
+            llm,
+            unit,
+            zones: candidates,
+            text: zoneRouteText,
+            embeddingVec: embedding?.values,
+          });
+          zoneId = resolved.zone.id;
+        }
+      } else if (unit.zoneId) {
+        // Explicit reference may be an id or a slug; normalize to the zone id
+        // so writes never persist a slug into `units.zone_id`. Callers that
+        // are zone-scoped cannot pin a write into a partition they cannot
+        // access (403, no leak into another user's personal zone).
+        const zones = await storage.listZones();
+        const zone = zones.find((z) => z.id === unit.zoneId || z.slug === unit.zoneId);
+        if (!zone) {
+          throw new AmemError('NOT_FOUND', `zone ${unit.zoneId} not found in this workspace`);
+        }
+        const scoped = currentZoneIds();
+        if (scoped && !scoped.includes(zone.id)) {
+          throw new AmemError('FORBIDDEN', `zone ${unit.zoneId} is not accessible in this scope`);
+        }
+        zoneId = zone.id;
       }
       const full: Unit = {
         id: unit.id ?? newId('unit'),
@@ -286,6 +374,7 @@ export function createService(
         confidence: unit.confidence ?? 0.7,
         embedding,
         createdAt: unit.createdAt ?? now,
+        createdByUserId: unit.createdByUserId ?? requireRequestContext().userId,
         validFrom: unit.validFrom,
         validTo: unit.validTo,
         sourceCount: unit.sourceCount ?? 0,
@@ -293,6 +382,7 @@ export function createService(
         decay: unit.decay ?? 1,
         version: unit.version ?? 1,
         updatedAt: now,
+        zoneId,
       };
       const version: Version = {
         id: newId('ver'),
@@ -363,6 +453,9 @@ export function createService(
       let tokensSaved = 0;
       const shouldExtract = input.extract ?? true;
       if (shouldExtract) {
+        // Resolve the partition once per ingest and reuse it for every
+        // distilled unit (per-unit rule matches still apply in saveUnitInner).
+        const zoneAccess = await getZoneAccess(storage, requireRequestContext().userId);
         const result = await distillUnits(llm, embed, input.content, storage, config);
         deduplicated = result.deduplicated;
         tokensSaved = result.tokensSavedByDedup;
@@ -381,7 +474,8 @@ export function createService(
             confidence: 0.7,
             importance: 0.5,
             decay: 1,
-          });
+            zoneId: input.zoneId,
+          }, { zoneAccess });
           units.push(unit);
           if (source) {
             await storage.addCitation({
@@ -432,6 +526,17 @@ export function createService(
             scenes,
           },
         );
+        await emitPipeline('ingested', trace.id, trace.title, {
+          unitIds: units.map((u) => u.id),
+          sessionId: input.sessionId,
+          deduplicated,
+        });
+        for (const u of units) {
+          await emitPipeline('distilled', u.id, u.title, {
+            traceId: trace.id,
+            type: u.type,
+          });
+        }
 
         // Auto-precipitate assets (scenarios/skills/codegraph/wiki) when enabled.
         const ap = config.autoPrecipitate;
@@ -529,6 +634,13 @@ export function createService(
             unitTitles: result.items.map((i) => i.unit.title),
           },
         );
+        for (const item of result.items) {
+          await emitPipeline('recalled', item.unit.id, item.unit.title, {
+            query: input.query,
+            score: item.score,
+            reason: item.reason,
+          });
+        }
         return result;
       },
 
@@ -550,63 +662,97 @@ export function createService(
             personaVersion: result.persona?.version,
           },
         );
+        for (const item of result.units) {
+          await emitPipeline('recalled', item.unit.id, item.unit.title, {
+            query: input.query,
+            score: item.score,
+            reason: item.reason,
+            layered: true,
+          });
+        }
         return result;
       },
 
       async search(query: string, opts: SearchOptions = {}): Promise<SearchResult> {
-        const limit = opts.limit ?? 10;
-        const offset = opts.offset ?? 0;
-        const queryVec = await embed.embed(query);
-        const all = await storage.allUnitsWithEmbeddings();
-        const active = all.filter((u) => {
-          if (u.status === 'archived') return false;
-          if (opts.status && u.status !== opts.status) return false;
-          if (opts.type && u.type !== opts.type) return false;
-          if (opts.category && u.labels?.category !== opts.category) return false;
-          if (opts.tag && !u.tags.includes(opts.tag)) return false;
-          return true;
-        });
-        const scored = active.map((unit) => {
-          let score = 0;
-          let semantic = 0;
-          let terms: string[] = [];
-          if (unit.embedding) {
-            semantic = Math.max(0, cosine(queryVec, unit.embedding.values));
-            score += semantic * 0.5;
-          }
-          const kw = keywordScore(query, unit, opts);
-          terms = kw.terms;
-          score += kw.score * 0.5;
-          const via: SearchResult['items'][number]['via'] =
-            semantic > 0.05 && kw.score > 0 ? 'hybrid' : semantic > 0.05 ? 'semantic' : kw.score > 0 ? 'keyword' : 'hybrid';
-          return { unit, score, via, terms, kwScore: kw.score };
-        });
-        scored.sort((a, b) => b.score - a.score);
-        // Keyword hits always surface before semantic-only matches so exact
-        // term matches are never drowned out by noisy semantic similarity.
-        const keywordHits = scored.filter((t) => t.kwScore > 0);
-        const semanticOnly = scored.filter((t) => t.kwScore === 0);
-        // Within keyword hits rank by keyword score first (more matched terms
-        // win) so a full title match outranks a single shared character.
-        keywordHits.sort((a, b) => b.kwScore - a.kwScore || b.score - a.score);
-        const ranked = [...keywordHits, ...semanticOnly];
-        const items: SearchResultItem[] = ranked.slice(offset, offset + limit).map((t) => ({
-          unit: toUnitSummary(t.unit),
-          score: t.score,
-          via: t.via,
-          terms: t.terms,
-        }));
+        const ctx = requireRequestContext();
+        const zones = await accessibleZones(storage, ctx);
+        const zonesById = new Map(zones.map((z) => [z.id, z]));
+        const explicit = opts.zone ? await resolveExplicitZone(opts.zone, storage, ctx) : null;
+        const searchInner = async (scope: RequestContext, _routed: RoutedZone | undefined) => {
+          const limit = opts.limit ?? 10;
+          const offset = opts.offset ?? 0;
+          const queryVec = await embed.embed(query);
+          const all = await storage.allUnitsWithEmbeddings();
+          const allowed = scope.zoneIds && scope.zoneIds.length > 0 ? new Set(scope.zoneIds) : null;
+          const active = all.filter((u) => {
+            if (u.status === 'archived') return false;
+            if (allowed && (!u.zoneId || !allowed.has(u.zoneId))) return false;
+            if (opts.status && u.status !== opts.status) return false;
+            if (opts.type && u.type !== opts.type) return false;
+            if (opts.category && u.labels?.category !== opts.category) return false;
+            if (opts.tag && !u.tags.includes(opts.tag)) return false;
+            return true;
+          });
+          const scored = active.map((unit) => {
+            let score = 0;
+            let semantic = 0;
+            let terms: string[] = [];
+            if (unit.embedding) {
+              semantic = Math.max(0, cosine(queryVec, unit.embedding.values));
+              score += semantic * 0.5;
+            }
+            const kw = keywordScore(query, unit, opts);
+            terms = kw.terms;
+            score += kw.score * 0.5;
+            const via: SearchResult['items'][number]['via'] =
+              semantic > 0.05 && kw.score > 0 ? 'hybrid' : semantic > 0.05 ? 'semantic' : kw.score > 0 ? 'keyword' : 'hybrid';
+            return { unit, score, via, terms, kwScore: kw.score };
+          });
+          scored.sort((a, b) => b.score - a.score);
+          // Keyword hits always surface before semantic-only matches so exact
+          // term matches are never drowned out by noisy semantic similarity.
+          const keywordHits = scored.filter((t) => t.kwScore > 0);
+          const semanticOnly = scored.filter((t) => t.kwScore === 0);
+          // Within keyword hits rank by keyword score first (more matched terms
+          // win) so a full title match outranks a single shared character.
+          keywordHits.sort((a, b) => b.kwScore - a.kwScore || b.score - a.score);
+          const ranked = [...keywordHits, ...semanticOnly];
+          const items: SearchResultItem[] = ranked.slice(offset, offset + limit).map((t) => {
+            const summary = toUnitSummary(t.unit);
+            const zone = summary.zoneId ? zonesById.get(summary.zoneId) : undefined;
+            return {
+              unit: zone ? { ...summary, zoneSlug: zone.slug, zoneName: zone.name } : summary,
+              score: t.score,
+              via: t.via,
+              terms: t.terms,
+            };
+          });
+          return { ranked, items };
+        };
+        const { ranked, items } = explicit
+          ? await runWithRequestContextAsync({ ...ctx, zoneIds: [explicit.id] }, () =>
+              searchInner({ ...ctx, zoneIds: [explicit.id] }, explicit),
+            )
+          : await searchInner(ctx, undefined);
         await emitActivity(
           'search',
-          `Search "${query.slice(0, 80)}" → ${items.length} hit(s)`,
+          `Search "${query.slice(0, 80)}" → ${items.length} hit(s)${explicit ? ` in ${explicit.name}` : ''}`,
           {
             query,
-            limit,
-            offset,
+            limit: opts.limit ?? 10,
+            offset: opts.offset ?? 0,
+            zoneId: explicit?.id,
             unitIds: items.map((i) => i.unit.id),
             unitTitles: items.map((i) => i.unit.title),
           },
         );
+        for (const item of items) {
+          await emitPipeline('recalled', item.unit.id, item.unit.title, {
+            query,
+            score: item.score,
+            via: item.via,
+          });
+        }
         return { query, items, total: ranked.length };
       },
 
@@ -617,6 +763,10 @@ export function createService(
           `Saved unit "${saved.title}" (${saved.type})`,
           { unitId: saved.id, type: saved.type, status: saved.status },
         );
+        await emitPipeline('stored', saved.id, saved.title, {
+          type: saved.type,
+          status: saved.status,
+        });
         return saved;
       },
 
@@ -638,7 +788,7 @@ export function createService(
           embedding: patch.embedding ?? existing.embedding,
         };
         if (patch.title !== undefined || patch.summary !== undefined || patch.body !== undefined || !next.embedding) {
-          next.embedding = await computeEmbedding([next.title, next.summary, next.body].filter(Boolean).join(' '));
+          next.embedding = await computeUnitEmbedding(next.title, next.summary, next.body);
         }
         await storage.createVersion({
           id: newId('ver'),
@@ -654,6 +804,11 @@ export function createService(
           `Updated unit "${next.title}"`,
           { unitId: next.id, reason, version: next.version },
         );
+        await emitPipeline('stored', next.id, next.title, {
+          reason,
+          version: next.version,
+          status: next.status,
+        });
         return next;
       },
 
@@ -680,6 +835,7 @@ export function createService(
         status?: Unit['status'];
         tag?: string;
         category?: string;
+        zoneId?: string;
         limit?: number;
         offset?: number;
       } = {}): Promise<UnitSummary[]> {
@@ -689,6 +845,14 @@ export function createService(
         if (filter.status) list = list.filter((u) => u.status === filter.status);
         if (filter.tag) list = list.filter((u) => u.tags.includes(filter.tag!));
         if (filter.category) list = list.filter((u) => u.category === filter.category);
+        if (filter.zoneId) {
+          // Zone reference may be an id or a slug; normalize to the id so
+          // MCP/REST callers are consistent in both local and HTTP modes.
+          const zones = await storage.listZones();
+          const zoneId = zones.find((z) => z.id === filter.zoneId)?.id ??
+            zones.find((z) => z.slug === filter.zoneId)?.id;
+          if (zoneId) list = list.filter((u) => u.zoneId === zoneId);
+        }
         list.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
         const offset = filter.offset ?? 0;
         const limit = filter.limit ?? list.length;
@@ -945,7 +1109,14 @@ export function createService(
       },
 
       async workingMemory(date?: string, budget?: number): Promise<WorkingMemory> {
-        return buildWorkingMemory(storage, config, date ?? nowIso(), budget);
+        const wm = await buildWorkingMemory(storage, config, date ?? nowIso(), budget);
+        for (const u of wm.selected) {
+          await emitPipeline('recalled', u.id, u.title, {
+            date: wm.date,
+            scope: 'working-memory',
+          });
+        }
+        return wm;
       },
 
       async listScenarios(filter: { tag?: string; status?: ScenarioStatus; limit?: number; sort?: 'updated' | 'heat' } = {}): Promise<Scenario[]> {
@@ -1246,6 +1417,36 @@ export function createService(
         return result;
       },
 
+      async importPdf(input: ImportPdfInput): Promise<ImportSourcesResult> {
+        // OCR resolution: env config wins, then DB-managed OCR settings (Settings UI).
+        const dbOcr = await storage.getOcrSettings();
+        const ocrCfg =
+          config.ocr?.baseUrl && config.ocr.model
+            ? config.ocr
+            : dbOcr
+              ? { baseUrl: dbOcr.baseUrl, model: dbOcr.model, apiKey: dbOcr.apiKey, minChars: dbOcr.minChars }
+              : undefined;
+        const deps: ImporterDeps = {
+          storage,
+          ingest: (i) => service.ingest(i),
+          saveUnit: (u) => service.saveUnit(u),
+          linkUnits: (l) => service.linkUnits({ ...l, auto: true }),
+          ocr: createOcrClient(ocrCfg),
+          ocrMinChars: ocrCfg?.minChars,
+        };
+        const before = (await storage.allLinks()).length;
+        const result = await importPdfFn(deps, input);
+        await generateLinks(storage, embed, config);
+        const after = (await storage.allLinks()).length;
+        result.links += Math.max(0, after - before);
+        await emitActivity(
+          'import_pdf',
+          `Imported PDF ${input.filename}: ${result.sources} chunk(s) → ${result.units} unit(s)`,
+          { ...result, filename: input.filename },
+        );
+        return result;
+      },
+
       async importCodebase(input: ImportCodebaseInput): Promise<ImportSourcesResult> {
         const deps: ImporterDeps = {
           storage,
@@ -1349,13 +1550,36 @@ export function createService(
       async curate(preset?: 'fast' | 'full'): Promise<CurateReport> {
         // Link generation is offline/heuristic and cheap in both presets; only
         // skip it when no embedder is available.
+        const full = preset !== 'fast';
+        let classified = 0;
+        let examined = 0;
+        let viaRules = 0;
+        let viaLlm = 0;
+        if (full) {
+          // Full maintenance pass: LLM-classify every unclassified unit first,
+          // then run the offline consolidation below. Fast is consolidation
+          // only — no LLM calls, no label churn.
+          const cls = await service.classifyUnits({});
+          classified = cls.classified;
+          examined = cls.examined;
+          viaRules = cls.viaRules;
+          viaLlm = cls.viaLlm;
+        }
         const report = await consolidate(storage, config, embed, undefined);
         await emitActivity(
           'curate',
-          `Curated (${preset ?? 'full'}): +${report.linksCreated} links, ${report.linksPruned} pruned, ${report.crystalsPromoted} crystals, ${report.archived} archived`,
-          { ...report, preset: preset ?? 'full' },
+          `Curated (${preset ?? 'full'}): +${report.linksCreated} links, ${report.linksPruned} pruned, ${report.crystalsPromoted} crystals, ${report.archived} archived, ${classified} classified`,
+          { ...report, preset: preset ?? 'full', classified, examined, viaRules, viaLlm },
         );
-        return report;
+        for (const u of report.touched ?? []) {
+          await emitPipeline('curated', u.id, u.title, {
+            preset: preset ?? 'full',
+            linksCreated: report.linksCreated,
+            crystalsPromoted: report.crystalsPromoted,
+            archived: report.archived,
+          });
+        }
+        return { ...report, classified, examined, viaRules, viaLlm };
       },
 
       async stats(): Promise<Stats> {
@@ -1389,6 +1613,10 @@ export function createService(
 
       async activity(filter: ActivityFilter = {}): Promise<ActivityEvent[]> {
         return storage.listEvents(filter);
+      },
+
+      async pipeline(limit?: number): Promise<PipelineStage[]> {
+        return storage.listPipeline(limit ?? 50);
       },
 
       async activitySummary(filter: { hours?: number; limit?: number } = {}): Promise<ActivitySummary> {
@@ -1487,6 +1715,52 @@ export function createService(
 
       async getTrace(id: TraceId): Promise<Trace | null> {
         return storage.getTrace(id);
+      },
+
+      async deleteTraces(filter: { ids?: string[]; before?: string; all?: boolean } = {}): Promise<number> {
+        return storage.deleteTraces(filter);
+      },
+
+      async reembedAll(opts?: { dryRun?: boolean }): Promise<{
+        scanned: number;
+        updated: number;
+        skipped: number;
+        mode: string;
+      }> {
+        const units = await storage.allUnitsWithEmbeddings();
+        let updated = 0;
+        let skipped = 0;
+        for (const unit of units) {
+          const values =
+            embed.mode === 'offline'
+              ? hashUnitEmbed(
+                  { title: unit.title, summary: unit.summary, body: unit.body },
+                  await embed.dims(),
+                )
+              : await (async () => {
+                  const text = [
+                    unit.title,
+                    unit.summary ?? '',
+                    (unit.body ?? '').slice(0, EMBED_BODY_HEAD),
+                  ]
+                    .filter(Boolean)
+                    .join(' ');
+                  if (!text) return null;
+                  return embed.embed(text);
+                })();
+          if (!values) {
+            skipped++;
+            continue;
+          }
+          if (!opts?.dryRun) {
+            await storage.updateUnitEmbedding(unit.id, {
+              dims: values.length,
+              values,
+            });
+          }
+          updated++;
+        }
+        return { scanned: units.length, updated, skipped, mode: embed.mode };
       },
 
       async import(payload: ExportBundle): Promise<ImportResult> {
@@ -1601,8 +1875,16 @@ export function createService(
         llm = next;
       },
 
+      getLlm() {
+        return llm;
+      },
+
       setEmbedder(next: Embedder) {
         embed = next;
+      },
+
+      getEmbedder() {
+        return embed;
       },
     };
 

@@ -23,6 +23,7 @@ import type {
   ExportBundle,
   ImportCodebaseInput,
   ImportDirInput,
+  ImportPdfInput,
   ImportResult,
   ImportSessionsInput,
   ImportSourcesResult,
@@ -36,6 +37,7 @@ import type {
   NewAsset,
   NewUnit,
   Persona,
+  PipelineStage,
   PrecipitateResult,
   RecallInput,
   RecallResult,
@@ -59,11 +61,16 @@ import type {
   WorkingMemory,
   Graph,
 } from '@amem/core';
+import { OfflineEmbedder } from '@amem/core';
+import type { Embedder, LlmClient } from '@amem/core';
 
 export interface HttpBackendOpts {
   baseUrl: string;
   token?: string;
   workspace?: string;
+  /** Zone id or slug sent as x-amem-zone so the server enforces partition
+   *  scope per request (parallels AMEM_WORKSPACE → x-amem-workspace). */
+  zone?: string;
 }
 
 class HttpError extends Error {
@@ -87,6 +94,7 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
     };
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
     if (opts.workspace) headers['x-amem-workspace'] = opts.workspace;
+    if (opts.zone) headers['x-amem-zone'] = opts.zone;
     if (body !== undefined) headers['content-type'] = 'application/json';
 
     const res = await fetch(`${api}${path}`, {
@@ -133,8 +141,14 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
     async recallLayered(input: RecallInput): Promise<LayeredRecallResult> {
       return req('POST', '/recall/layered', input);
     },
-    async search(query: string, o?: { limit?: number; includeBody?: boolean }): Promise<SearchResult> {
-      return req('GET', `/search${qs({ q: query, limit: o?.limit, includeBody: o?.includeBody })}`);
+    async search(
+      query: string,
+      o?: { limit?: number; includeBody?: boolean; zone?: string },
+    ): Promise<SearchResult> {
+      return req(
+        'GET',
+        `/search${qs({ q: query, limit: o?.limit, includeBody: o?.includeBody, zone: o?.zone })}`,
+      );
     },
     async saveUnit(unit: NewUnit): Promise<Unit> {
       return req('POST', '/units', { unit });
@@ -161,6 +175,7 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
       status?: UnitStatus;
       tag?: string;
       category?: string;
+      zoneId?: string;
       limit?: number;
       offset?: number;
     }): Promise<UnitSummary[]> {
@@ -171,6 +186,7 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
           status: filter?.status,
           tag: filter?.tag,
           category: filter?.category,
+          zone: filter?.zoneId,
           limit: filter?.limit,
           offset: filter?.offset,
         })}`,
@@ -277,6 +293,9 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
     async importDirectory(input: ImportDirInput): Promise<ImportSourcesResult> {
       return req('POST', '/import/directory', input);
     },
+    async importPdf(input: ImportPdfInput): Promise<ImportSourcesResult> {
+      return req('POST', '/import/pdf', input);
+    },
     async importCodebase(input: ImportCodebaseInput): Promise<ImportSourcesResult> {
       return req('POST', '/import/codebase', input);
     },
@@ -299,11 +318,18 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
     async activity(filter?: ActivityFilter): Promise<ActivityEvent[]> {
       return req('GET', `/activity${qs({ kind: filter?.kind, limit: filter?.limit })}`);
     },
+    async pipeline(limit?: number): Promise<PipelineStage[]> {
+      return req('GET', `/pipeline${qs({ limit })}`);
+    },
     async activitySummary(filter?: { hours?: number; limit?: number }): Promise<ActivitySummary> {
       return req('GET', `/activity/summary${qs({ hours: filter?.hours, limit: filter?.limit })}`);
     },
     async getTraces(filter?: { sessionId?: SessionId; limit?: number }): Promise<Trace[]> {
       return req('GET', `/traces${qs({ sessionId: filter?.sessionId, limit: filter?.limit })}`);
+    },
+    async deleteTraces(filter?: { ids?: string[]; before?: string; all?: boolean }): Promise<number> {
+      const res = await req<{ deleted?: number }>('DELETE', '/traces', filter ?? {});
+      return res?.deleted ?? 0;
     },
     async getTrace(id: TraceId): Promise<Trace | null> {
       try {
@@ -328,6 +354,24 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
     // no direct model to swap; the server already hot-swaps on activate/update.
     setLlm(): void {},
     setEmbedder(): void {},
+    getLlm(): LlmClient {
+      const unavailable = (): Promise<never> =>
+        Promise.reject(new Error('LLM is not available over the HTTP backend'));
+      return { complete: unavailable, completeJSON: unavailable };
+    },
+    getEmbedder(): Embedder {
+      // Offline hashing embedder: enough for shape parity; remote zone
+      // classification/centroids run on the server, not through the proxy.
+      return new OfflineEmbedder();
+    },
+    async reembedAll(opts?: { dryRun?: boolean }): Promise<{
+      scanned: number;
+      updated: number;
+      skipped: number;
+      mode: string;
+    }> {
+      return req('POST', '/admin/reembed', opts ?? {});
+    },
   };
 }
 

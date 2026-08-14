@@ -9,6 +9,9 @@ docker compose -f docker/docker-compose.yml up --build -d
 - Exposes the app on `http://localhost:8321` (web UI + REST API).
 - Persists your knowledge in the host directory `../data` (bind mount) at `/data/amem.db` on the container — the same `data/` folder host tools use, so the MCP stdio path and Docker share one SQLite file.
 - `HEALTHCHECK` hits `GET /api/v1/health`.
+- `.env` variables are passed through for most settings (see the reference
+  below); `AMEM_WORKSPACE` / `AMEM_ZONE` set the default partition scope for
+  MCP/API clients launched inside the container.
 
 Stop / logs / rebuild:
 ```sh
@@ -66,6 +69,8 @@ All config is via environment variables (`configFromEnv()` in `@amem/core`). See
 | `AMEM_RATE_LIMIT_OAUTH_PER_MINUTE` | 20 | Max `/oauth/*` (authorize/token/consent/revoke) hits/min/IP |
 | `AMEM_RATE_LIMIT_REGISTER_PER_HOUR` | 10 | Max `POST /oauth/register` attempts/hour/IP |
 | `AMEM_MCP_OAUTH` | 1 | MCP-over-HTTP: require OAuth/PAT (`1`) or open local demo (`0`) |
+| `AMEM_WORKSPACE` | – | Default workspace slug for MCP/API scope (MCP stdio default `personal`); passed through in Docker |
+| `AMEM_ZONE` | – | Default zone (id/slug) for MCP/API scope; when set, every MCP tool reads/writes inside that zone and a bad value fails startup; passed through in Docker |
 
 See `docs/AUTH_WORKSPACES.md` for the full auth + workspace security model
 (OAuth 2.1 PKCE, PAT, scope spec, workspace isolation, audit).

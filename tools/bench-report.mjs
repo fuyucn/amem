@@ -25,6 +25,8 @@ if (!resultsDir) {
 }
 
 const lib = arg('--lib', 'amem');
+const version = arg('--version', resultsDir.split('/').filter(Boolean).pop() || 'amem_vX');
+const workers = arg('--workers', '4');
 const gradesPath = join(resultsDir, `${lib}_locomo_grades.json`);
 const statsPath = join(resultsDir, `${lib}_locomo_ingestion_stats.json`);
 
@@ -196,7 +198,7 @@ const html = `<!DOCTYPE html>
 <header>
   <h1>Amem — OmniMemEval LoCoMo Benchmark</h1>
   <p>Memory backend evaluation · LLM-as-Judge accuracy &amp; token efficiency · generated ${new Date().toISOString().slice(0, 10)}</p>
-  <p>Run: <code>amem-amem_v3</code> · full 6-step pipeline · top-k 20 · 8 workers · LLM: DeepSeek-V4-Flash (local proxy)</p>
+  <p>Run: <code>${version}</code> · full 6-step pipeline · top-k 20 · ${workers} workers · LLM: DeepSeek-V4-Flash (local proxy)</p>
 </header>
 <main>
   <section>
@@ -215,7 +217,7 @@ const html = `<!DOCTYPE html>
       ${reference.map((r) => `<div class="bar-row"><span class="bar-label">${r.name}${r.name === 'MemMachine' ? ' *' : ''}</span>${accBar(r.acc).replace('<div class="bar-row">', '').replace('</div>', '')}<span class="bar-label" style="color:var(--muted)">${r.tokens.toLocaleString()} tok</span></div>`).join('\n')}
       <div class="bar-row"><span class="bar-label" style="color:var(--accent);font-weight:700">Amem (this run)</span>${accBar(judgeAcc).replace('<div class="bar-row">', '').replace('</div>', '')}<span class="bar-label" style="color:var(--accent);font-weight:700">${ctxTokens.toLocaleString()} tok</span></div>
     </div>
-    <div class="note">* MemMachine is the only self-hosted reference row. Amem runs fully local (SQLite + offline embedder + local LLM proxy). Score is a conservative lower bound: this run shares one workspace across all 10 conversations; per-workspace isolation (docs/AUTH_WORKSPACES.md) removes cross-user bleed.</div>
+    <div class="note">* MemMachine is the only self-hosted reference row. Amem runs fully local (SQLite + offline embedder + local LLM proxy). This run gives each LoCoMo conversation its own Amem workspace (locomo-exp-user-N-amem-v4), so recall cannot bleed across users; token counts stay low because Amem distills each session into atomic units and returns a compact cited context block instead of raw history.</div>
   </section>
 
   <section>

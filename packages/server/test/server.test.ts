@@ -62,6 +62,15 @@ describe('Amem REST API', () => {
     expect((body as { ok: boolean }).ok).toBe(true);
   });
 
+  it('POST /api/v1/admin/reembed returns scan stats (offline mode)', async () => {
+    const { status, body } = await j('POST', '/api/v1/admin/reembed');
+    expect(status).toBe(200);
+    const result = body as { scanned: number; updated: number; skipped: number; mode: string };
+    expect(typeof result.scanned).toBe('number');
+    expect(typeof result.updated).toBe('number');
+    expect(result.mode).toBe('offline');
+  });
+
   it('POST /ingest accepts a brand-new sessionId (FK ordering)', async () => {
     const { status, body } = await j('POST', '/api/v1/ingest', {
       sessionId: 'sess-new-' + Date.now(),
@@ -149,6 +158,33 @@ describe('Amem REST API', () => {
     expect(kinds).toContain('recall');
   });
 
+  it('GET /api/v1/pipeline returns real lifecycle stages for ingest + recall', async () => {
+    const ingest = await j('POST', '/api/v1/ingest', {
+      title: 'Pipeline seed',
+      content: 'Decision: every memory card must carry its real lifecycle stages. Procedure: record stages on ingest, save, curate and recall.',
+    });
+    expect(ingest.status).toBe(200);
+    const ingestBody = ingest.body as { trace: { id: string }; units: Array<{ id: string }> };
+
+    const before = await j('GET', '/api/v1/pipeline?limit=50');
+    const stagesBefore = before.body as Array<{ cardId: string; kind: string; createdAt: string }>;
+    const kindsBefore = stagesBefore.map((s) => s.kind);
+    expect(kindsBefore).toContain('ingested');
+    expect(kindsBefore).toContain('distilled');
+    const traceStage = stagesBefore.find((s) => s.cardId === ingestBody.trace.id);
+    expect(traceStage).toBeDefined();
+    expect(traceStage!.kind).toBe('ingested');
+
+    await j('POST', '/api/v1/recall', { query: 'real lifecycle stages', topK: 5 });
+    const after = await j('GET', '/api/v1/pipeline?limit=50');
+    const kindsAfter = (after.body as Array<{ kind: string }>).map((s) => s.kind);
+    expect(kindsAfter).toContain('recalled');
+
+    const capped = await j('GET', '/api/v1/pipeline?limit=2');
+    expect((capped.body as unknown[]).length).toBeLessThanOrEqual(2);
+    expect(capped.status).toBe(200);
+  });
+
   it('GET /api/v1/activity/summary aggregates input/output flow and accessed memory regions', async () => {
     await j('POST', '/api/v1/ingest', {
       title: 'Flow summary seed',
@@ -181,6 +217,117 @@ describe('Amem REST API', () => {
     const amem = s.topActors.find((a) => a.actor === 'amem');
     expect(amem?.writes).toBeGreaterThanOrEqual(1);
     expect(amem?.reads).toBeGreaterThanOrEqual(1);
+  });
+
+  it('POST /import/pdf extracts and ingests a base64 PDF', async () => {
+    const esc =
+      'Amem PDF endpoint guide\n\n' +
+      'Asteroid mining economics: 4Vesta nickel reserves exceed one trillion tons; ' +
+      'regolith processing yields propellant for Mars transit.';
+    const objs: Record<number, string> = {
+      1: '<< /Type /Catalog /Pages 2 0 R >>',
+      2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      5: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    };
+    const stream = `BT /F1 24 Tf 72 720 Td (${esc}) Tj ET`;
+    objs[4] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+    let pdf = '%PDF-1.4\n';
+    const offsets: number[] = [];
+    for (let i = 1; i <= 5; i += 1) {
+      offsets[i] = pdf.length;
+      pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+    }
+    const xrefStart = pdf.length;
+    pdf += `xref\n0 6\n0000000000 65535 f \n`;
+    for (let i = 1; i <= 5; i += 1) {
+      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+    const b64 = Buffer.from(pdf, 'latin1').toString('base64');
+
+    const res = await j('POST', '/api/v1/import/pdf', {
+      filename: 'endpoint-guide.pdf',
+      contentBase64: b64,
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { units: number; sources: number; files: number };
+    expect(body.files).toBe(1);
+    expect(body.units).toBeGreaterThan(0);
+
+    const found = await j('GET', '/api/v1/search?q=4Vesta%20nickel');
+    expect(found.status).toBe(200);
+    expect((found.body as { items?: unknown[] }).items?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it('POST /ingest/file dispatches PDFs to the PDF pipeline', async () => {
+    const esc =
+      'Ingest file endpoint guide\n\n' +
+      'Helium-3 harvesting on Luna: a single regolith processor yields 20 kg per year; ' +
+      'fusion plants on Earth consume it at scale.';
+    const objs: Record<number, string> = {
+      1: '<< /Type /Catalog /Pages 2 0 R >>',
+      2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      5: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    };
+    const stream = `BT /F1 24 Tf 72 720 Td (${esc}) Tj ET`;
+    objs[4] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+    let pdf = '%PDF-1.4\n';
+    const offsets: number[] = [];
+    for (let i = 1; i <= 5; i += 1) {
+      offsets[i] = pdf.length;
+      pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+    }
+    const xrefStart = pdf.length;
+    pdf += `xref\n0 6\n0000000000 65535 f \n`;
+    for (let i = 1; i <= 5; i += 1) {
+      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+
+    const res = await j('POST', '/api/v1/ingest/file', {
+      filename: 'ingest-guide.pdf',
+      contentBase64: Buffer.from(pdf, 'latin1').toString('base64'),
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { units: number; files: number; sources: number };
+    expect(body.files).toBe(1);
+    expect(body.units).toBeGreaterThan(0);
+
+    const found = await j('GET', '/api/v1/search?q=Helium-3%20harvesting');
+    expect(found.status).toBe(200);
+    expect((found.body as { items?: unknown[] }).items?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it('POST /ingest/file ingests text files through the ingest pipeline', async () => {
+    const res = await j('POST', '/api/v1/ingest/file', {
+      filename: 'operations-notes.md',
+      contentBase64: Buffer.from(
+        '# Operations notes\n\n' +
+        'Weekly deploy cadence is every Tuesday 10:00 PST. Rollbacks use the previous tagged image ' +
+        'and must be announced in #ops before executing.',
+        'utf8',
+      ).toString('base64'),
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { units: number; traces: number; sources: number };
+    expect(body.traces).toBeGreaterThan(0);
+    expect(body.units).toBeGreaterThan(0);
+
+    const found = await j('GET', '/api/v1/search?q=rollback%20image');
+    expect(found.status).toBe(200);
+    expect((found.body as { items?: unknown[] }).items?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it('POST /ingest/file rejects missing filename or empty content', async () => {
+    const noName = await j('POST', '/api/v1/ingest/file', { contentBase64: Buffer.from('x').toString('base64') });
+    expect(noName.status).toBe(400);
+    const empty = await j('POST', '/api/v1/ingest/file', {
+      filename: 'blank.txt',
+      contentBase64: Buffer.from('   ').toString('base64'),
+    });
+    expect(empty.status).toBe(400);
   });
 
   it('POST /assets/extract/codegraph and /assets/extract/wiki are idempotent', async () => {
@@ -558,6 +705,122 @@ describe('AI provider API', () => {
       await j('DELETE', `/api/v1/providers/${id}`);
     }
   });
+
+  it('OCR settings CRUD: key masking, ai/status sync, and clear', async () => {
+    const before = await j('GET', '/api/v1/ocr/settings');
+    expect(before.status).toBe(200);
+    expect((before.body as { settings: unknown }).settings).toBeNull();
+
+    const statusBefore = await j('GET', '/api/v1/ai/status');
+    expect((statusBefore.body.ocr as unknown)).toBeNull();
+
+    const created = await j('PUT', '/api/v1/ocr/settings', {
+      baseUrl: 'https://ocr.example.com/v1/',
+      model: 'vision-model',
+      apiKey: 'sk-ocr-secret-123456',
+      minChars: 80,
+    });
+    expect(created.status).toBe(200);
+    const body = created.body as {
+      settings: { baseUrl?: string; model?: string; minChars?: number; hasKey?: boolean; keyPrefix?: string; apiKey?: unknown };
+    };
+    expect(body.settings.baseUrl).toBe('https://ocr.example.com/v1');
+    expect(body.settings.model).toBe('vision-model');
+    expect(body.settings.minChars).toBe(80);
+    expect(body.settings.hasKey).toBe(true);
+    expect(body.settings.keyPrefix).toBe('sk-ocr…');
+    expect(body.settings).not.toHaveProperty('apiKey');
+
+    try {
+      const got = await j('GET', '/api/v1/ocr/settings');
+      expect((got.body as { settings: { model: string } }).settings.model).toBe('vision-model');
+      expect((got.body as { settings: { apiKey?: unknown } }).settings).not.toHaveProperty('apiKey');
+
+      const statusAfter = await j('GET', '/api/v1/ai/status');
+      expect((statusAfter.body.ocr as { baseUrl?: string }).baseUrl).toBe('https://ocr.example.com/v1');
+      expect((statusAfter.body.ocr as { model?: string }).model).toBe('vision-model');
+
+      const updated = await j('PUT', '/api/v1/ocr/settings', {
+        baseUrl: 'https://ocr.example.com/v1',
+        model: 'vision-model-2',
+        minChars: 40,
+      });
+      expect(updated.status).toBe(200);
+      expect((updated.body as { settings: { model: string } }).settings.model).toBe('vision-model-2');
+      expect((updated.body as { settings: { hasKey: boolean } }).settings.hasKey).toBe(true);
+    } finally {
+      const del = await j('DELETE', '/api/v1/ocr/settings');
+      expect(del.status).toBe(200);
+      expect((del.body as { settings: unknown }).settings).toBeNull();
+    }
+
+    const after = await j('GET', '/api/v1/ocr/settings');
+    expect((after.body as { settings: unknown }).settings).toBeNull();
+    const statusFinal = await j('GET', '/api/v1/ai/status');
+    expect((statusFinal.body.ocr as unknown)).toBeNull();
+  });
+
+  it('OCR settings validate required fields', async () => {
+    const bad = await j('PUT', '/api/v1/ocr/settings', { model: 'vision-model' });
+    expect(bad.status).toBe(400);
+    const bad2 = await j('PUT', '/api/v1/ocr/settings', { baseUrl: 'https://ocr.example.com/v1' });
+    expect(bad2.status).toBe(400);
+  });
+
+  it('import/pdf falls back to DB OCR settings when env OCR is unset', async () => {
+    // Scanned-style PDF: valid file, but no text layer (needs OCR).
+    const objs: Record<number, string> = {
+      1: '<< /Type /Catalog /Pages 2 0 R >>',
+      2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      5: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    };
+    const stream = `BT /F1 24 Tf 72 720 Td () Tj ET`;
+    objs[4] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+    let pdf = '%PDF-1.4\n';
+    const offsets: number[] = [];
+    for (let i = 1; i <= 5; i += 1) {
+      offsets[i] = pdf.length;
+      pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+    }
+    const xrefStart = pdf.length;
+    pdf += `xref\n0 6\n0000000000 65535 f \n`;
+    for (let i = 1; i <= 5; i += 1) {
+      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+    const b64 = Buffer.from(pdf, 'latin1').toString('base64');
+
+    // Without OCR settings: scanned PDF is skipped silently.
+    const skipped = await j('POST', '/api/v1/import/pdf', {
+      filename: 'scan-skip.pdf',
+      contentBase64: b64,
+    });
+    expect(skipped.status).toBe(200);
+    expect((skipped.body as { units: number }).units).toBe(0);
+
+    // With DB OCR settings pointing at an unreachable endpoint, OCR is
+    // attempted (proves DB settings drive the fallback instead of env).
+    const put = await j('PUT', '/api/v1/ocr/settings', {
+      baseUrl: 'http://127.0.0.1:1',
+      model: 'vision-model',
+      minChars: 60,
+    });
+    expect(put.status).toBe(200);
+    try {
+      const res = await j('POST', '/api/v1/import/pdf', {
+        filename: 'scan-attempted.pdf',
+        contentBase64: b64,
+      });
+      // OCR was attempted and the unreachable endpoint failed (5xx), instead of
+      // silently returning units: 0.
+      expect(res.status).not.toBe(200);
+      const errBody = res.body as { error?: { code?: string; message?: string } };
+      expect(errBody.error?.message ?? '').toMatch(/fetch failed|OCR/i);
+    } finally {
+      await j('DELETE', '/api/v1/ocr/settings');
+    }
+  });
 });
 
 describe('auth', () => {
@@ -775,6 +1038,69 @@ describe('workspaces + PAT auth', () => {
       authorization: `Bearer ${wsAToken}`,
     });
     expect(noHeader.status).toBe(200);
+  });
+
+  it('purges traces only for admin scope and only with an explicit filter', async () => {
+    const login = await j('POST', '/api/v1/auth/login', {
+      email: 'admin@test.local',
+      password: 'admin-pass',
+      tokenName: 'trace-purge-test',
+    });
+    expect(login.status).toBe(200);
+    const adminToken = (login.body as { token: string }).token;
+    const adminAuth = { authorization: `Bearer ${adminToken}` };
+
+    // Two ingests create two traces (raw material records).
+    const t1 = await j(
+      'POST',
+      '/api/v1/ingest',
+      { title: 'trace purge alpha', content: 'raw trace one' },
+      adminAuth,
+    );
+    const t2 = await j(
+      'POST',
+      '/api/v1/ingest',
+      { title: 'trace purge beta', content: 'raw trace two' },
+      adminAuth,
+    );
+    expect(t1.status).toBe(200);
+    expect(t2.status).toBe(200);
+    const id1 = (t1.body as { trace: { id: string } }).trace.id;
+    const id2 = (t2.body as { trace: { id: string } }).trace.id;
+    expect(id1).toBeTruthy();
+    expect(id2).toBeTruthy();
+
+    // Missing filter -> 400, nothing deleted.
+    const bad = await j('DELETE', '/api/v1/traces', {}, adminAuth);
+    expect(bad.status).toBe(400);
+    expect((bad.body as { error: { code: string } }).error.code).toBe('VALIDATION');
+
+    // Non-admin credential cannot purge.
+    const readOnly = await j(
+      'POST',
+      '/api/v1/auth/tokens',
+      { name: 'read-only', scopes: ['read'], workspaceIds: ['*'] },
+      adminAuth,
+    );
+    const readOnlyToken = (readOnly.body as { token: string }).token;
+    const denied = await j(
+      'DELETE',
+      '/api/v1/traces',
+      { ids: [id1] },
+      { authorization: `Bearer ${readOnlyToken}` },
+    );
+    expect(denied.status).toBe(403);
+
+    // Admin purges by ids.
+    const purge = await j('DELETE', '/api/v1/traces', { ids: [id1, id2] }, adminAuth);
+    expect(purge.status).toBe(200);
+    expect((purge.body as { deleted: number }).deleted).toBe(2);
+
+    const list = await j('GET', '/api/v1/traces', undefined, adminAuth);
+    expect(list.status).toBe(200);
+    const ids = ((list.body as Array<{ id: string }>) || []).map((t) => t.id);
+    expect(ids).not.toContain(id1);
+    expect(ids).not.toContain(id2);
   });
 });
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { PageHead } from '../components/PageHead';
 import type { Persona } from '../types';
 
 export function PersonaView() {
@@ -27,6 +28,10 @@ export function PersonaView() {
   const chars = persona?.content.length ?? 0;
   return (
     <div className="grid">
+      <PageHead
+        title="Persona"
+        sub="L3 profile — the standing character of this memory: what matters, what to avoid, how to behave."
+      />
       <div className="panel">
         <div className="row">
           <h3 style={{ margin: 0 }}>L3 — Persona</h3>

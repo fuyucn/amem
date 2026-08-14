@@ -252,7 +252,6 @@ async function main() {
 
   let traces = 0;
   let units = 0;
-  let links = 0;
   for (const doc of DOCS) {
     const r = await j(
       'POST',
@@ -271,6 +270,7 @@ async function main() {
     units += (r.units || []).length;
     console.log(`  ingested: ${doc.title} -> ${(r.units || []).length} units`);
   }
+  console.log(`\ningested ${units} units across ${traces} docs`);
 
   const stats = await j('GET', '/api/v1/stats', undefined, SLUG);
   console.log('\nworkspace stats:', JSON.stringify(stats.counts, null, 2));

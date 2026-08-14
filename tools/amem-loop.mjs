@@ -8,17 +8,47 @@
  *   node tools/amem-loop.mjs status
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const BASE = (process.env.AMEM_BASE_URL || 'http://127.0.0.1:8321').replace(/\/$/, '');
-const TOKEN = process.env.AMEM_API_TOKEN || '';
+
+// Token resolution: env first, then the auto-generated PAT in ~/.amem, then the
+// hook env file. This makes the loop helper work in any shell (subagents, cron,
+// new threads) without exporting AMEM_API_TOKEN manually.
+function resolveCredential() {
+  const home = homedir();
+  const tokenFile = join(home, '.amem', 'codex-pat.token');
+  const patMetaFile = join(home, '.amem', 'codex-pat.json');
+  const hookEnvFile = join(home, '.codex', 'hooks', 'amem.env');
+  let token = process.env.AMEM_API_TOKEN || '';
+  let workspace = process.env.AMEM_WORKSPACE || '';
+  if (!token && existsSync(tokenFile)) token = readFileSync(tokenFile, 'utf8').trim();
+  if (!token && existsSync(hookEnvFile)) {
+    const m = readFileSync(hookEnvFile, 'utf8').match(/^AMEM_API_TOKEN=(.+)$/m);
+    if (m) token = m[1].trim();
+  }
+  if (!workspace && existsSync(patMetaFile)) {
+    try {
+      workspace = JSON.parse(readFileSync(patMetaFile, 'utf8')).workspace || '';
+    } catch { /* ignore malformed meta */ }
+  }
+  if (!workspace && existsSync(hookEnvFile)) {
+    const m = readFileSync(hookEnvFile, 'utf8').match(/^AMEM_WORKSPACE=(.+)$/m);
+    if (m) workspace = m[1].trim();
+  }
+  return { token, workspace };
+}
+
+const { token: TOKEN, workspace: WORKSPACE } = resolveCredential();
 
 async function api(method, path, body) {
   const res = await fetch(`${BASE}/api/v1${path}`, {
     method,
     headers: {
       'content-type': 'application/json',
+      ...(WORKSPACE ? { 'x-amem-workspace': WORKSPACE } : {}),
       ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -99,6 +129,11 @@ async function status() {
 
 const [cmd, ...rest] = process.argv.slice(2);
 try {
+  if (!TOKEN) {
+    throw new Error(
+      'no API token found: set AMEM_API_TOKEN, or run `amem pat create` / ensure ~/.amem/codex-pat.token exists',
+    );
+  }
   if (cmd === 'start') await start(rest.join(' '));
   else if (cmd === 'save') {
     const [type, title, ...bodyParts] = rest;

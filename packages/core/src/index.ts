@@ -17,10 +17,31 @@ export {
 export {
   type LlmClient,
   LLM_EXTRACT_INTENT,
+  LLM_ZONE_ASSIGN_INTENT,
   OpenAiCompatibleLlm,
   MockLlmClient,
   createLlm,
 } from './llm.js';
+export {
+  type OcrClient,
+  OpenAiCompatibleOcr,
+  createOcrClient,
+} from './ocr.js';
+export {
+  accessibleZones,
+  getZoneAccess,
+  getZoneAccessSync,
+  resolveExplicitZone,
+  resolveZoneForWrite,
+  recomputeZoneCentroids,
+  proposeNewZones,
+  type ZoneAccess,
+  type ZoneLookup,
+  type ZoneProposal,
+  type ZoneResolveOutcome,
+  type ResolveZoneInput,
+  type ProposeZonesOptions,
+} from './zones.js';
 export {
   type CandidateUnit,
   type DistillResult,
@@ -35,7 +56,7 @@ export {
   mergeUnits,
 } from './dedup.js';
 export { generateLinks } from './linkgen.js';
-export { recall } from './recall.js';
+export { recall, routeZone } from './recall.js';
 export { layeredRecall } from './layeredRecall.js';
 export {
   segmentTranscript,
@@ -54,7 +75,13 @@ export { extractSkills, LLM_SKILL_INTENT } from './skills.js';
 export { routeAssets, agentCanUse } from './route.js';
 export { extractCodegraph } from './codegraph.js';
 export { extractWiki } from './wiki.js';
-export { importDirectory, importCodebase, importSessions, type ImporterDeps } from './importer.js';
+export {
+  importDirectory,
+  importPdf,
+  importCodebase,
+  importSessions,
+  type ImporterDeps,
+} from './importer.js';
 export { consolidate, type ConsolidateOptions } from './consolidate.js';
 export { buildWorkingMemory } from './workingMemory.js';
 export { renderOkfBundle, slugify } from './okf.js';

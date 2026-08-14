@@ -1,13 +1,25 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Highlight } from '../components/Highlight';
-import type { RecallResult, SearchResult, UnitStatus, UnitType } from '../types';
+import { PageHead } from '../components/PageHead';
+import { ZoneFilter } from '../components/ZoneFilter';
+import type { RecallResult, SearchResult, UnitStatus, UnitType, Zone } from '../types';
 
 const CATEGORIES = ['code', 'infra', 'workflow', 'product', 'personal', 'research', 'meta', 'other'] as const;
 const TYPES: UnitType[] = ['fact', 'decision', 'plan', 'procedure', 'preference', 'concept', 'lesson', 'question'];
 const STATUSES: UnitStatus[] = ['pending', 'reviewed', 'archived', 'merged', 'flagged'];
 
-export function Search({ initialQuery = '' }: { initialQuery?: string }) {
+export function Search({
+  initialQuery = '',
+  zones = [],
+  zone = '',
+  onZoneChange,
+}: {
+  initialQuery?: string;
+  zones?: Zone[];
+  zone?: string;
+  onZoneChange?: (zoneId: string) => void;
+}) {
   const [query, setQuery] = useState(initialQuery);
   const [budget, setBudget] = useState(4000);
   const [status, setStatus] = useState('');
@@ -29,11 +41,12 @@ export function Search({ initialQuery = '' }: { initialQuery?: string }) {
       category: category || undefined,
       tag: tag || undefined,
       fullText,
+      zone: zone || undefined,
     };
     setLoading(true);
     try {
       const [r, s] = await Promise.all([
-        api.recall({ query: q, tokenBudget: budget }),
+        api.recall({ query: q, tokenBudget: budget, zone: zone || undefined }),
         api.search(q, { ...filter, limit: PAGE }),
       ]);
       setRecall(r); setKw(s);
@@ -53,7 +66,6 @@ export function Search({ initialQuery = '' }: { initialQuery?: string }) {
       setQuery(initialQuery);
       runWith(initialQuery);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery]);
 
   const loadMore = async () => {
@@ -64,6 +76,7 @@ export function Search({ initialQuery = '' }: { initialQuery?: string }) {
       category: category || undefined,
       tag: tag || undefined,
       fullText,
+      zone: zone || undefined,
     };
     setMoreLoading(true);
     try {
@@ -82,6 +95,10 @@ export function Search({ initialQuery = '' }: { initialQuery?: string }) {
 
   return (
     <div className="grid">
+      <PageHead
+        title="Search & recall"
+        sub="Ask a question and get the most relevant memories back — semantic recall plus keyword search, with an optional token budget."
+      />
       <form className="panel row" onSubmit={run}>
         <input style={{ flex: 1 }} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Question or topic — e.g. how is agent memory stored" />
         <label className="muted">budget
@@ -103,6 +120,7 @@ export function Search({ initialQuery = '' }: { initialQuery?: string }) {
           <option value="">category: all</option>
           {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
+        <ZoneFilter zones={zones} value={zone} onChange={onZoneChange ?? (() => undefined)} />
         <input
           style={{ width: 130 }} value={tag} onChange={(e) => setTag(e.target.value)}
           placeholder="tag (exact)"
@@ -146,6 +164,11 @@ export function Search({ initialQuery = '' }: { initialQuery?: string }) {
                 <b><Highlight text={it.unit.title} terms={it.terms} /></b>{' '}
                 <span className="badge">{it.via}</span>{' '}
                 <span className="muted">{(it.score).toFixed(2)}</span>
+                {it.unit.zoneId && (
+                  <span className="badge badge-zone">
+                    {zones.find((z) => z.id === it.unit.zoneId)?.name || it.unit.zoneId.replace(/^z_/, '').split('_ws_')[0]}
+                  </span>
+                )}
                 <span className="muted">{it.unit.summary ? <><br /><Highlight text={it.unit.summary} terms={it.terms} /></> : null}</span>
                 <span className="muted">{it.unit.category ? <><br />category: {it.unit.category}</> : null}</span>
                 {it.unit.tags.map((t) => <span key={t} className="tag">{t}</span>)}

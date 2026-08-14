@@ -121,6 +121,19 @@ export interface ProviderTestResult {
   model?: string;
 }
 
+/** OCR endpoint managed from Settings (instance-global, like AI providers). */
+export interface OcrSettings {
+  baseUrl: string;
+  model: string;
+  /** Decrypted only at the storage boundary; never serialized by the API. */
+  apiKey?: string;
+  /** Below this extracted char count, a PDF page is treated as a scan. */
+  minChars: number;
+  updatedAt: IsoDate;
+}
+
+export type OcrSettingsInput = Pick<OcrSettings, 'baseUrl' | 'model' | 'apiKey' | 'minChars'>;
+
 // ---------------------------------------------------------------------------
 // Core entities
 // ---------------------------------------------------------------------------
@@ -150,6 +163,10 @@ export interface Unit {
   embedding?: Embedding;
   createdAt: IsoDate;
   updatedAt: IsoDate;
+  /** User who wrote this unit (provenance; set from the request context). */
+  createdByUserId?: string;
+  /** Workspace this unit belongs to (storage-level isolation). */
+  workspaceId?: string;
   /** bi-temporal: valid window (optional). */
   validFrom?: IsoDate;
   validTo?: IsoDate;
@@ -160,6 +177,8 @@ export interface Unit {
   /** 0..1 decay score (higher = more relevant). */
   decay: number;
   version: number;
+  /** Partition inside the workspace (inbox by default). */
+  zoneId?: string;
 }
 
 /** Convenience type for creating a unit (id/version/timestamps omitted). */
@@ -370,6 +389,17 @@ export interface AmemConfig {
     model?: string;
     apiKey?: string;
   };
+  /**
+   * Optional OCR endpoint for scanned PDFs (OpenAI-compatible vision model).
+   * When unset, scanned files with no text layer are skipped by importPdf.
+   */
+  ocr?: {
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+    /** Minimum extracted text-layer chars to consider a PDF text-based. */
+    minChars?: number;
+  };
   thresholds: {
     /** independent sources required to promote a unit to a crystal. */
     minSourcesForCrystal: number;
@@ -424,6 +454,8 @@ export interface IngestInput {
   contentType?: string;
   sourceUri?: string;
   sourceKind?: SourceKind;
+  /** Partition the extracted units into a specific zone (auto-assigned when absent). */
+  zoneId?: string;
   /** run distillation to extract units. Default true. */
   extract?: boolean;
   /** run auto-linking after ingest. Default true. */
@@ -489,6 +521,12 @@ export interface RecallInput {
   /** max units to consider before budget truncation. */
   topK?: number;
   includeBody?: boolean;
+  /** Zone id or slug to restrict recall to. Omitted = auto-route by query. */
+  zone?: string;
+  /** true: skip zone auto-routing and search the full accessible zone set.
+   *  false (default): auto-route by query (routed zone + workspace inbox),
+   *  still never returning units outside the accessible zone set. */
+  crossZone?: boolean;
 }
 
 export interface ContextItem {
@@ -496,6 +534,18 @@ export interface ContextItem {
   score: number;
   reason: string;
   citations: Source[];
+  /** Partition this unit lives in (provenance + UI grouping). */
+  zoneId?: string;
+  zoneSlug?: string;
+  zoneName?: string;
+}
+
+/** Zone auto-routed for a recall/search (query matched one partition). */
+export interface RoutedZone {
+  id: string;
+  slug: string;
+  name: string;
+  reason: string;
 }
 
 export interface RecallResult {
@@ -508,6 +558,8 @@ export interface RecallResult {
   grounded: boolean;
   /** units suppressed because they were near-duplicates of a higher-ranked one. */
   deduplicated?: number;
+  /** Zone this recall was routed into (auto-route or explicit zone). */
+  routedZone?: RoutedZone;
 }
 
 /** Layered recall: L3 persona bootstrap + L2 scenarios, then L1 units. */
@@ -523,6 +575,8 @@ export interface LayeredRecallResult {
   grounded: boolean;
   /** units suppressed because they were near-duplicates of a higher-ranked one. */
   deduplicated?: number;
+  /** Zone this recall was routed into (auto-route or explicit zone). */
+  routedZone?: RoutedZone;
 }
 
 export interface SearchOptions {
@@ -536,6 +590,11 @@ export interface SearchOptions {
   status?: UnitStatus;
   /** Match terms against the full body (slower) instead of title/summary/tags + body head. */
   fullText?: boolean;
+  /** Zone id or slug to restrict search to. Omitted = all accessible zones. */
+  zone?: string;
+  /** true: search across all accessible zones (the default). Kept for API
+   *  symmetry with recall; search never restricts to a routed partition. */
+  crossZone?: boolean;
 }
 
 export interface SearchResultItem {
@@ -560,12 +619,55 @@ export interface UnitSummary {
   title: string;
   summary: string;
   tags: string[];
+  /** Partition inside the workspace (inbox by default). */
+  zoneId?: string;
+  /** Partition slug/name (enriched by recall/search for UI grouping). */
+  zoneSlug?: string;
+  zoneName?: string;
+  /** User who wrote this unit (provenance). */
+  createdByUserId?: string;
+  /** Workspace this unit belongs to. */
+  workspaceId?: string;
   /** Auto/manual classification stored on labels.category. */
   category?: string;
   importance: number;
   decay: number;
   status: UnitStatus;
   updatedAt: IsoDate;
+}
+
+// --- Zones (workspace partitions) -------------------------------------------
+
+export type ZoneKind = 'personal' | 'shared' | 'project' | 'inbox';
+export type ZoneVisibility = 'private' | 'workspace' | 'members';
+export type ZoneStatus = 'active' | 'archived';
+export type ZoneMemberRole = 'owner' | 'editor' | 'reader';
+
+export interface Zone {
+  id: string;
+  workspaceId: string;
+  slug: string;
+  name: string;
+  kind: ZoneKind;
+  ownerUserId?: string;
+  visibility: ZoneVisibility;
+  description?: string;
+  /** JSON-encoded embedding centroid used by the auto-assignment engine. */
+  embeddingCentroid?: string;
+  auto: boolean;
+  status: ZoneStatus;
+  createdAt: IsoDate;
+  updatedAt: IsoDate;
+}
+
+export type NewZone = Pick<Zone, 'workspaceId' | 'slug' | 'name' | 'kind'> &
+  Partial<Pick<Zone, 'ownerUserId' | 'visibility' | 'description' | 'embeddingCentroid' | 'auto'>>;
+
+export interface ZoneMember {
+  zoneId: string;
+  userId: string;
+  role: ZoneMemberRole;
+  createdAt: IsoDate;
 }
 
 export interface UnitNode extends UnitSummary {
@@ -680,6 +782,19 @@ export interface ImportDirInput {
   sourceKind?: SourceKind;
 }
 
+export interface ImportPdfInput {
+  /** PDF filename (used as title/source URI). */
+  filename: string;
+  /** Raw PDF bytes as base64. Self-local: bytes are parsed in-process only. */
+  contentBase64: string;
+  /** Run LLM/heuristic distillation per chunk. Default true. */
+  extract?: boolean;
+  /** Target zone id or slug; default auto-routing. */
+  zone?: string;
+  /** Max bytes accepted (default 20 MB). */
+  maxBytes?: number;
+}
+
 export interface ImportCodebaseInput {
   /** absolute path to a codebase root. */
   path: string;
@@ -710,6 +825,8 @@ export interface ImportSourcesResult {
   files: number;
   sessions: number;
   tokensSavedByDedup: number;
+  /** Pages recovered via OCR when the PDF had no usable text layer. */
+  ocrPages?: number;
 }
 
 /** Cold-start bootstrap: import sessions/docs/codebase, then optionally precipitate assets + persona. */
@@ -745,6 +862,20 @@ export interface CurateReport {
   contradictionsFlagged: number;
   archived: number;
   summary: string;
+  /** units examined by the LLM classification pass (full preset only). */
+  examined?: number;
+  /** units classified by the full-preset pass. */
+  classified?: number;
+  /** classified via deterministic rules. */
+  viaRules?: number;
+  /** classified via the LLM provider. */
+  viaLlm?: number;
+  /** units whose long bodies were compressed by refineUnits (full preset). */
+  refined?: number;
+  /** estimated tokens saved by body compression. */
+  refineTokensSaved?: number;
+  /** units this pass actually touched (crystal promotion / decay / links), for pipeline visibility. */
+  touched?: Array<{ id: string; title: string }>;
 }
 
 export interface ImportResult {
@@ -845,6 +976,27 @@ export interface ActivityFilter {
   before?: IsoDate;
 }
 
+/** Lifecycle stage of a memory card in the real pipeline. Written by the
+ *  service layer with real timestamps (ingest → distill → curate, or stored /
+ *  recalled) and replayed by the Activity UI as the actual flow. */
+export type PipelineStageKind =
+  | 'ingested'
+  | 'stored'
+  | 'distilled'
+  | 'curated'
+  | 'recalled';
+
+export interface PipelineStage {
+  id: string;
+  /** The memory card this stage belongs to (trace id or unit id). */
+  cardId: string;
+  cardTitle: string;
+  kind: PipelineStageKind | string;
+  actor?: string;
+  meta?: Record<string, unknown>;
+  createdAt: IsoDate;
+}
+
 /** Aggregated knowledge flow over a recent window: writes in, reads out, and the memory regions agents touched. */
 export interface ActivitySummary {
   window: { events: number; hours: number; since: IsoDate };
@@ -883,7 +1035,7 @@ export interface AmemService {
   updateUnit(id: UnitId, patch: Partial<NewUnit>, reason?: string): Promise<Unit>;
   deleteUnit(id: UnitId, reason?: string): Promise<void>;
   reviewUnit(id: UnitId, action: 'accept' | 'discard'): Promise<Unit | null>;
-  listUnits(filter?: { type?: UnitType; status?: UnitStatus; tag?: string; category?: string; limit?: number; offset?: number }): Promise<UnitSummary[]>;
+  listUnits(filter?: { type?: UnitType; status?: UnitStatus; tag?: string; category?: string; zoneId?: string; limit?: number; offset?: number }): Promise<UnitSummary[]>;
   /** Batch classify units by the category taxonomy (rules + optional LLM). */
   classifyUnits(opts?: { ids?: string[]; mode?: 'rules' | 'llm' | 'auto'; reclassify?: boolean }): Promise<import('./classify.js').ClassifyReport>;
   /** Batch manage units: archive / restore / delete / accept. */
@@ -929,6 +1081,7 @@ export interface AmemService {
   autoPrecipitate(opts?: { mode?: 'fast' | 'auto' | 'full' }): Promise<PrecipitateResult>;
   // --- Cold-start importers ---
   importDirectory(input: ImportDirInput): Promise<ImportSourcesResult>;
+  importPdf(input: ImportPdfInput): Promise<ImportSourcesResult>;
   importCodebase(input: ImportCodebaseInput): Promise<ImportSourcesResult>;
   importSessions(input: ImportSessionsInput): Promise<ImportSourcesResult>;
   /** Cold-start bootstrap: import sessions/docs/codebase, then precipitate assets + persona. */
@@ -937,14 +1090,29 @@ export interface AmemService {
   curate(preset?: 'fast' | 'full'): Promise<CurateReport>;
   stats(): Promise<Stats>;
   activity(filter?: ActivityFilter): Promise<ActivityEvent[]>;
+  /** Real lifecycle stages of memory cards, newest first (Activity queue). */
+  pipeline(limit?: number): Promise<PipelineStage[]>;
   activitySummary(filter?: { hours?: number; limit?: number }): Promise<ActivitySummary>;
   getTraces(filter?: { sessionId?: SessionId; limit?: number }): Promise<Trace[]>;
   getTrace(id: TraceId): Promise<Trace | null>;
+  deleteTraces(filter?: { ids?: string[]; before?: string; all?: boolean }): Promise<number>;
   import(payload: ExportBundle): Promise<ImportResult>;
   export(): Promise<ExportBundle>;
   health(): { ok: boolean; version: string; embeddingMode: EmbeddingMode };
   /** Swap the LLM client at runtime (Settings provider activate/update). */
   setLlm(llm: import('./llm.js').LlmClient): void;
+  /** Current LLM client (for zone classification / proposals from the API layer). */
+  getLlm(): import('./llm.js').LlmClient;
   /** Swap the embedder at runtime (Settings provider activate/update). */
   setEmbedder(embedder: import('./embedder.js').Embedder): void;
+  /** Current embedder (for zone centroid recompute / clustering proposals). */
+  getEmbedder(): import('./embedder.js').Embedder;
+  /** Recompute stored embeddings for every unit (admin; needed after an
+   *  embedder upgrade so old vectors are not compared in a stale space). */
+  reembedAll(opts?: { dryRun?: boolean }): Promise<{
+    scanned: number;
+    updated: number;
+    skipped: number;
+    mode: string;
+  }>;
 }

@@ -7,6 +7,8 @@ export interface RequestContext {
   workspaceId: string;
   workspaceSlug: string;
   userId?: string;
+  /** Zone partitions the caller may read/write; absent = legacy (no zone filter). */
+  zoneIds?: string[];
   scopes: string[];
   realm: 'anonymous' | 'legacy' | 'user' | 'pat';
   authEnabled: boolean;
@@ -30,6 +32,14 @@ export function requireRequestContext(): RequestContext {
     };
   }
   return ctx;
+}
+
+/** Copy of the accessible zone ids for the current context, or undefined when
+ *  the caller is not zone-scoped (legacy behavior: everything in the workspace
+ *  is visible). */
+export function currentZoneIds(): string[] | undefined {
+  const ctx = storage.getStore();
+  return ctx?.zoneIds ? [...ctx.zoneIds] : undefined;
 }
 
 export function runWithRequestContext<T>(ctx: RequestContext, fn: () => T): T {

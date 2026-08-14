@@ -16,6 +16,9 @@ Unit types (8): `fact`, `decision`, `plan`, `procedure`, `preference`, `concept`
   - `status`: `pending | reviewed | archived | merged | flagged`
   - `importance`: 0..1 graph importance (degree centrality).
   - `decay`: 0..1 relevance score, lowered over time; below `forgetThreshold` → archived unless recently reinforced.
+  - Provenance columns: `workspace_id`, `zone_id`, `created_by_user_id` — every write records *which workspace / partition / user* it belongs to (storage-level isolation).
+- **Zone** (`id, workspace_id, slug, name, kind[personal|shared|project|inbox], owner_user_id?, visibility[private|workspace|members], description?, embedding_centroid?, auto, status, created/updated`, `UNIQUE(workspace_id, slug)`) — the partition under a workspace; every unit belongs to exactly one zone.
+- **ZoneMember** (`zone_id, user_id, role[owner|editor|reader], created_at`) — ACL for `members`-visibility project zones.
 - **Source** (`id, uri?, title, kind[url|file|transcript|manual|note], contentHash, contentLength`)
   - **UnitSource** citation: `(unitId, sourceId, span?)` — the provenance backing a unit.
 - **Link** (`id, sourceUnitId, targetUnitId, relation, reason, confidence, auto`)
@@ -26,7 +29,8 @@ Unit types (8): `fact`, `decision`, `plan`, `procedure`, `preference`, `concept`
 
 ## Storage
 
-- SQLite tables: `w_meta`, `sessions`, `traces`, `sources`, `units`, `unit_sources`, `links`, `versions`, `tags`, `unit_tags`, `jobs`; plus an FTS5 index over unit text for keyword search.
+- SQLite tables: `w_meta`, `sessions`, `traces`, `sources`, `units`, `unit_sources`, `links`, `versions`, `tags`, `unit_tags`, `jobs`, `zones`, `zone_members`; plus an FTS5 index over unit text for keyword search.
+- Zone scoping is enforced in SQL (`zone_id IN (...json_each...)`) whenever a request context carries `zoneIds`; see `docs/ZONES.md` for the partition/ACL model.
 - Embeddings: JSON `{dims, values}` in a nullable column; cosine computed in-process for semantic retrieval.
 - Retrieval is **hybrid**: semantic (embedding cosine) + keyword (FTS) + recency + importance + decay, merged and ranked.
 

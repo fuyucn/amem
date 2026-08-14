@@ -113,6 +113,24 @@
 - 现有单用户库 → 迁移时创建缺省 personal workspace（slug=`personal`），旧数据全部归入。
 - 未指定 workspace 的请求默认 principal 的 personal workspace。
 
+### 5.3 Zone（workspace 内分区）ACL 模型
+
+Workspace 之下再分 **zone**（`inbox` / `shared` / `personal` / `project`），
+详见 `docs/ZONES.md`。隔离在存储层强制（SQL `zone_id IN (...)`），
+与 workspace 隔离同一纵深：
+
+- 可访问集合 = 自己的 `personal` zone + 所有 `visibility='workspace'` zone
+  （inbox/shared）+ 自己是成员的 `project` zone；`zone_members` 角色
+  `owner > editor > reader`。
+- 请求上下文 `zoneIds` 由服务端从用户 ACL 解析（`getZoneAccess`）；无用户
+  身份（legacy/anonymous）保持向后兼容 = 全 workspace 可见。
+- 显式 scope（`x-amem-zone` header / `AMEM_ZONE` env）指向不可访问 zone
+  时**拒绝**（403 / 启动失败），绝不静默放大可见范围。
+- 写入分区校验在 service 层：显式 zone 不在当前 `zoneIds` 内 → `403`；
+  会话锁定单一 zone 时新写入直接进入该分区。
+- PAT 保持 workspace 级 scope，不引入 zone 级 scope（zone 走 membership
+  解析）——见 tasks 的 non_goals。
+
 ## 6. 数据模型变更（Schema v2）
 
 利用现有 `SCHEMA_VERSION` + `MIGRATIONS` 机制追加 `MIGRATIONS[1]`，全部 `IF NOT EXISTS` / `ALTER TABLE ADD COLUMN IF NOT EXISTS`（SQLite 3.35+ 支持 ADD COLUMN IF NOT EXISTS；better-sqlite3 自带版本满足）。

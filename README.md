@@ -185,6 +185,20 @@ Amem separates **who** you are (user / login session / PAT) from **what** you ca
 touch (workspace + scope). Requests are denied server-side before any storage
 access — scope checks are not a UI nicety.
 
+### First run onboarding
+
+When authentication is enabled (`AMEM_AUTH_ENABLED=true`), the web UI gates on a
+dedicated `/login` page with a three-step wizard:
+
+1. **Account** — sign in, or bootstrap the first admin on a fresh install, or
+   paste an existing PAT (Codex / CLI style).
+2. **Workspace** — pick an existing isolated namespace or create one (e.g.
+   `acme-prod`, `personal`).
+3. **Agent token** — mint a least-privilege PAT (`read write` scoped to that
+   workspace) and copy the ready-to-paste `~/.codex/config.toml` snippet.
+
+The same actions are available anytime under **Settings**.
+
 - **Scopes**: `read`, `write`, `admin`, plus per-workspace
   `ws:<slug>:read` / `ws:<slug>:write`. Every token carries a scope set; MCP and
   REST enforce it on every call.

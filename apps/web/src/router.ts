@@ -1,4 +1,5 @@
 export type Tab =
+  | 'login'
   | 'dashboard'
   | 'activity'
   | 'zones'
@@ -19,6 +20,7 @@ export interface Route {
 }
 
 const TAB_PATHS: Record<Tab, string> = {
+  login: '/login',
   dashboard: '/dashboard',
   activity: '/activity',
   zones: '/zones',

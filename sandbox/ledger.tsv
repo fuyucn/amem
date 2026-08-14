@@ -4,6 +4,6 @@ iter	phase	verdict	score	blocking	major	change
 2	revise	-	-	-	-	applied all fixes: T1 确定性种子 id+回填+inbox visibility；T2 createUnit/rowToUnit 持久化 zone_id；T3 links OR/assets AND 语义钉死；T6 deps+=T4；T7 非参数化读工具作用域+link_units 校验+get_graph 测试；T12+=AUTH_WORKSPACES.md；T5 异步 ctx+确定性测试；validator ok
 3	critique	pass	88	0	0	PE: 全部 blocking/major 已解决，仅剩 minor 措辞（已顺带修订）；覆盖完整、依赖图正确、可执行性高
 4	build	-	-	-	-	completed T10 (zone filters/badges/move: Units/Search/Dashboard + App shared activeZone) + T11 (POST /ingest/file + api.uploadFile + Review upload UI with drag-drop/zone/batch feedback); 294 tests green; eslint clean; docker rebuilt+deployed; smoke: upload md -> 3 units -> search hit
-5	build	-	-	-	-	T12 done + verify: zones API/seed ok, /zones route 200 in container, README zone doc, smoke passed, 294 tests green; amem-loop.mjs credential fallback (env->~/.amem/codex-pat.token->hook env); Stop hook hardened (hook.log + hook-last-attempt.json + token fallback, mock Stop ingested 4 units)
-6	build	-	-	-	-	T13 login onboarding delivered (PR #2 green); T14: bump GH Actions checkout@v7/setup-node@v7/pnpm@v6 + release.yml (GHCR image + archive on v* tag); 294 tests green; quality gate ok
-7	build	-	-	-	-	T14 complete: CI actions bumped, release workflow added, README/CHANGELOG updated, 294 tests green, quality gate ok
+6	keep	-	294/294	-	yes	T13 login onboarding: /login wizard (account→workspace→PAT) — Login.tsx + App auth gate + router login tab + README; quality gate ok; eslint clean; headless-chrome DOM verified; e2e API login→me→workspaces→PAT→recall 200
+7	build	-	-	-	-	T14: bump GH Actions checkout@v7/setup-node@v7/pnpm@v6 + release.yml (GHCR image + archive on v* tag); 294 tests green; quality gate ok
+8	build	-	-	-	-	T14 complete: CI actions bumped, release workflow added, README/CHANGELOG updated, 294 tests green, quality gate ok

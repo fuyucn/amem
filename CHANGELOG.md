@@ -6,11 +6,15 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-14
+
 ### Added
 
 - CI: GitHub Actions upgraded to `checkout@v7` / `setup-node@v7` /
   `pnpm/action-setup@v6`; new `release.yml` publishes a GHCR image and a
   source archive to GitHub Releases on every `v*` tag.
+- Login onboarding wizard: `/login` flow (account → workspace → PAT mint +
+  copyable `~/.codex/config.toml` MCP snippet) with auth gate.
 - Search pagination: `GET /api/v1/search` accepts `offset`, returns `total`;
   the Web UI shows "X more" and a **Load more** button (20/page).
 - `SECURITY.md`, `CODE_OF_CONDUCT.md`, GitHub issue/PR templates, CI badge.

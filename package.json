@@ -1,6 +1,6 @@
 {
   "name": "amem",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Amem \u2014 self-hosted, local-first agent knowledge & memory layer",
   "type": "module",

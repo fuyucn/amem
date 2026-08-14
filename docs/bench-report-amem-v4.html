@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amem — OmniMemEval LoCoMo Benchmark Report</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --panel2: #1d2638; --ink: #e8ecf4;
+    --muted: #9aa7bd; --line: #2a3550; --good: #34d399; --mid: #fbbf24; --low: #f87171;
+    --accent: #7aa2ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
+  header { padding: 32px 40px 20px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #141b2c, var(--bg)); }
+  header h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: .2px; }
+  header p { margin: 2px 0; color: var(--muted); }
+  main { max-width: 1080px; margin: 0 auto; padding: 28px 40px 80px; }
+  section { margin-top: 36px; }
+  h2 { font-size: 17px; margin: 0 0 12px; color: var(--accent); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .card .value { font-size: 30px; font-weight: 700; margin-top: 6px; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .good { color: var(--good); } .mid { color: var(--mid); } .low { color: var(--low); }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { background: var(--panel2); color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.row-amem { background: rgba(122, 162, 255, .10); }
+  tr.row-amem td:first-child { font-weight: 700; color: var(--accent); }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
+  .badge-cloud { color: var(--muted); }
+  .badge-local { color: var(--good); border-color: rgba(52, 211, 153, .4); }
+  .chart { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; }
+  .bar-row { display: grid; grid-template-columns: 96px 1fr 52px; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .bar-row .bar-label { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { height: 16px; background: var(--panel2); border-radius: 999px; overflow: hidden; }
+  .bar { height: 100%; border-radius: 999px; min-width: 2px; }
+  .bar-good { background: linear-gradient(90deg, #10b981, var(--good)); }
+  .bar-mid { background: linear-gradient(90deg, #d97706, var(--mid)); }
+  .bar-low { background: linear-gradient(90deg, #dc2626, var(--low)); }
+  .legend { display: flex; gap: 18px; color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+  .note { background: var(--panel); border-left: 3px solid var(--mid); border-radius: 8px; padding: 12px 16px; color: var(--muted); font-size: 13px; margin-top: 18px; }
+  code { background: var(--panel2); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+  footer { color: var(--muted); font-size: 12px; margin-top: 40px; border-top: 1px solid var(--line); padding-top: 16px; }
+  @media (max-width: 720px) { main, header { padding-left: 18px; padding-right: 18px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Amem — OmniMemEval LoCoMo Benchmark</h1>
+  <p>Memory backend evaluation · LLM-as-Judge accuracy &amp; token efficiency · generated 2026-08-14</p>
+  <p>Run: <code>amem-amem_v4</code> · full 6-step pipeline · top-k 20 · 4 workers · LLM: DeepSeek-V4-Flash (local proxy)</p>
+</header>
+<main>
+  <section>
+    <div class="cards">
+      <div class="card"><div class="label">LLM-Judge Accuracy</div><div class="value low">54.9%<span style="font-size:14px;color:var(--muted)"> ± 0.0</span></div><div class="sub">across 1540 questions / 10 conversations</div></div>
+      <div class="card"><div class="label">ROUGE-L F1</div><div class="value">31.1%</div><div class="sub">lexical overlap with ground truth (ROUGE-1 32.9%)</div></div>
+      <div class="card"><div class="label">Context Tokens / Question</div><div class="value good">2,382</div><div class="sub">avg tokens sent to answer model, incl. Amem recalled context</div></div>
+      <div class="card"><div class="label">Ingest Time</div><div class="value">17516s</div><div class="sub">10 LoCoMo conversations distilled</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Overall vs OmniMemEval reproduced backends</h2>
+    <div class="chart">
+      <div class="legend"><span><i class="bar-good" style="background:var(--good)"></i>LLM-judge accuracy</span><span class="muted">Reference: official OmniMemEval reproduced LoCoMo scores (same harness, gpt-4.1-mini answer / gpt-4o-mini judge)</span></div>
+      <div class="bar-row"><span class="bar-label">MemOS</span><span class="bar-label">88.8</span><div class="bar-track"><div class="bar bar-good" style="width:88.83%"></div></div><span class="bar-label" style="color:var(--muted)">5,400 tok</span></div>
+<div class="bar-row"><span class="bar-label">Cognee</span><span class="bar-label">83.5</span><div class="bar-track"><div class="bar bar-good" style="width:83.48%"></div></div><span class="bar-label" style="color:var(--muted)">32,532 tok</span></div>
+<div class="bar-row"><span class="bar-label">EverOS</span><span class="bar-label">82.8</span><div class="bar-track"><div class="bar bar-good" style="width:82.75%"></div></div><span class="bar-label" style="color:var(--muted)">8,559 tok</span></div>
+<div class="bar-row"><span class="bar-label">Hindsight</span><span class="bar-label">82.0</span><div class="bar-track"><div class="bar bar-good" style="width:81.99%"></div></div><span class="bar-label" style="color:var(--muted)">24,683 tok</span></div>
+<div class="bar-row"><span class="bar-label">Mem0</span><span class="bar-label">77.7</span><div class="bar-track"><div class="bar bar-mid" style="width:77.68%"></div></div><span class="bar-label" style="color:var(--muted)">17,395 tok</span></div>
+<div class="bar-row"><span class="bar-label">Letta</span><span class="bar-label">77.1</span><div class="bar-track"><div class="bar bar-mid" style="width:77.12%"></div></div><span class="bar-label" style="color:var(--muted)">14,188 tok</span></div>
+<div class="bar-row"><span class="bar-label">MemMachine *</span><span class="bar-label">73.9</span><div class="bar-track"><div class="bar bar-mid" style="width:73.9%"></div></div><span class="bar-label" style="color:var(--muted)">2,577 tok</span></div>
+<div class="bar-row"><span class="bar-label">mem9</span><span class="bar-label">73.6</span><div class="bar-track"><div class="bar bar-mid" style="width:73.64%"></div></div><span class="bar-label" style="color:var(--muted)">1,597 tok</span></div>
+<div class="bar-row"><span class="bar-label">Supermemory</span><span class="bar-label">73.5</span><div class="bar-track"><div class="bar bar-mid" style="width:73.53%"></div></div><span class="bar-label" style="color:var(--muted)">15,238 tok</span></div>
+<div class="bar-row"><span class="bar-label">MemoryLake</span><span class="bar-label">72.5</span><div class="bar-track"><div class="bar bar-mid" style="width:72.49%"></div></div><span class="bar-label" style="color:var(--muted)">5,202 tok</span></div>
+<div class="bar-row"><span class="bar-label">Viking</span><span class="bar-label">69.3</span><div class="bar-track"><div class="bar bar-mid" style="width:69.33%"></div></div><span class="bar-label" style="color:var(--muted)">5,964 tok</span></div>
+<div class="bar-row"><span class="bar-label">Zep / Graphiti</span><span class="bar-label">63.8</span><div class="bar-track"><div class="bar bar-mid" style="width:63.83%"></div></div><span class="bar-label" style="color:var(--muted)">1,862 tok</span></div>
+<div class="bar-row"><span class="bar-label">Memori</span><span class="bar-label">41.3</span><div class="bar-track"><div class="bar bar-low" style="width:41.34%"></div></div><span class="bar-label" style="color:var(--muted)">8,139 tok</span></div>
+<div class="bar-row"><span class="bar-label">Backboard.io</span><span class="bar-label">22.4</span><div class="bar-track"><div class="bar bar-low" style="width:22.4%"></div></div><span class="bar-label" style="color:var(--muted)">1,198 tok</span></div>
+      <div class="bar-row"><span class="bar-label" style="color:var(--accent);font-weight:700">Amem (this run)</span><span class="bar-label">54.9</span><div class="bar-track"><div class="bar bar-low" style="width:54.87012987012987%"></div></div><span class="bar-label" style="color:var(--accent);font-weight:700">2,382 tok</span></div>
+    </div>
+    <div class="note">* MemMachine is the only self-hosted reference row. Amem runs fully local (SQLite + offline embedder + local LLM proxy). This run gives each LoCoMo conversation its own Amem workspace (locomo-exp-user-N-amem-v4), so recall cannot bleed across users; token counts stay low because Amem distills each session into atomic units and returns a compact cited context block instead of raw history.</div>
+  </section>
+
+  <section>
+    <h2>Category breakdown</h2>
+    <table>
+      <thead><tr><th>Category</th><th class="num">Questions</th><th class="num">LLM-Judge Acc</th><th class="num">ROUGE-L</th><th class="num">Context Tokens</th></tr></thead>
+      <tbody><tr>
+      <td>Single-Hop</td>
+      <td class="num">282</td>
+      <td class="num">36.9 ± 0.0</td>
+      <td class="num">20.9%</td>
+      <td class="num">2,358</td>
+    </tr>
+<tr>
+      <td>Multi-Hop</td>
+      <td class="num">321</td>
+      <td class="num">28.0 ± 0.0</td>
+      <td class="num">18.1%</td>
+      <td class="num">2,390</td>
+    </tr>
+<tr>
+      <td>Temporal</td>
+      <td class="num">96</td>
+      <td class="num">53.1 ± 0.0</td>
+      <td class="num">17.9%</td>
+      <td class="num">2,315</td>
+    </tr>
+<tr>
+      <td>Open-Domain</td>
+      <td class="num">841</td>
+      <td class="num">71.3 ± 0.0</td>
+      <td class="num">41.0%</td>
+      <td class="num">2,394</td>
+    </tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Per-conversation scores</h2>
+    <table>
+      <thead><tr><th>Conversation</th><th class="num">Questions</th><th class="num">LLM-Judge Acc</th><th class="num">ROUGE-L</th><th class="num">Context Tokens</th></tr></thead>
+      <tbody><tr>
+      <td>locomo_exp_user_0</td>
+      <td class="num">152</td>
+      <td class="num">56.6</td>
+      <td class="num">28.3%</td>
+      <td class="num">2,336</td>
+    </tr>
+<tr>
+      <td>locomo_exp_user_1</td>
+      <td class="num">81</td>
+      <td class="num">48.1</td>
+      <td class="num">24.2%</td>
+      <td class="num">2,386</td>
+    </tr>
+<tr>
+      <td>locomo_exp_user_2</td>
+      <td class="num">152</td>
+      <td class="num">53.9</td>
+      <td class="num">32.1%</td>
+      <td class="num">2,348</td>
+    </tr>
+<tr>
+      <td>locomo_exp_user_3</td>
+      <td class="num">199</td>
+      <td class="num">48.7</td>
+      <td class="num">28.1%</td>
+      <td class="num">2,331</td>
+    </tr>
+<tr>
+      <td>locomo_exp_user_4</td>
+      <td class="num">178</td>
+      <td class="num">57.9</td>
+      <td class="num">35.9%</td>
+      <td class="num">2,225</td>
+    </tr>
+<tr>
+      <td>locomo_exp_user_5</td>
+      <td class="num">123</td>
+      <td class="num">55.3</td>
+      <td class="num">33.0%</td>
+      <td class="num">2,613</td>
+    </tr>
+<tr>
+      <td>locomo_exp_user_6</td>
+      <td class="num">150</td>
+      <td class="num">52.0</td>
+      <td class="num">31.9%</td>
+      <td class="num">2,433</td>
+    </tr>
+<tr>
+      <td>locomo_exp_user_7</td>
+      <td class="num">191</td>
+      <td class="num">60.7</td>
+      <td class="num">35.4%</td>
+      <td class="num">2,714</td>
+    </tr>
+<tr>
+      <td>locomo_exp_user_8</td>
+      <td class="num">156</td>
+      <td class="num">52.6</td>
+      <td class="num">30.4%</td>
+      <td class="num">2,263</td>
+    </tr>
+<tr>
+      <td>locomo_exp_user_9</td>
+      <td class="num">158</td>
+      <td class="num">59.5</td>
+      <td class="num">28.3%</td>
+      <td class="num">2,185</td>
+    </tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Reference table (OmniMemEval reproduced)</h2>
+    <table>
+      <thead><tr><th>Backend</th><th>Deployment</th><th class="num">LoCoMo Acc</th><th class="num">Context Tokens</th></tr></thead>
+      <tbody><tr class="">
+      <td>MemOS</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">88.8</td>
+      <td class="num">5,400</td>
+    </tr>
+<tr class="">
+      <td>Cognee</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">83.5</td>
+      <td class="num">32,532</td>
+    </tr>
+<tr class="">
+      <td>EverOS</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">82.8</td>
+      <td class="num">8,559</td>
+    </tr>
+<tr class="">
+      <td>Hindsight</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">82.0</td>
+      <td class="num">24,683</td>
+    </tr>
+<tr class="">
+      <td>Mem0</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">77.7</td>
+      <td class="num">17,395</td>
+    </tr>
+<tr class="">
+      <td>Letta</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">77.1</td>
+      <td class="num">14,188</td>
+    </tr>
+<tr class="">
+      <td>MemMachine</td>
+      <td><span class="badge badge-local">local/self-hosted</span></td>
+      <td class="num">73.9</td>
+      <td class="num">2,577</td>
+    </tr>
+<tr class="">
+      <td>mem9</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">73.6</td>
+      <td class="num">1,597</td>
+    </tr>
+<tr class="">
+      <td>Supermemory</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">73.5</td>
+      <td class="num">15,238</td>
+    </tr>
+<tr class="">
+      <td>MemoryLake</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">72.5</td>
+      <td class="num">5,202</td>
+    </tr>
+<tr class="">
+      <td>Viking</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">69.3</td>
+      <td class="num">5,964</td>
+    </tr>
+<tr class="">
+      <td>Zep / Graphiti</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">63.8</td>
+      <td class="num">1,862</td>
+    </tr>
+<tr class="">
+      <td>Memori</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">41.3</td>
+      <td class="num">8,139</td>
+    </tr>
+<tr class="">
+      <td>Backboard.io</td>
+      <td><span class="badge badge-cloud">cloud</span></td>
+      <td class="num">22.4</td>
+      <td class="num">1,198</td>
+    </tr>
+      <tr class="row-amem"><td>Amem (this run)</td><td><span class="badge badge-local">local/self-hosted</span></td><td class="num">54.9</td><td class="num">2,382</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>Amem · self-hosted agent memory knowledge graph · data stays on your machine · <a href="https://github.com/" style="color:var(--accent)">oss release</a> · full details in docs/BENCHMARK.md</footer>
+</main>
+</body>
+</html>

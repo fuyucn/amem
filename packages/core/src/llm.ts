@@ -9,6 +9,9 @@ export interface LlmClient {
 /** Marker intent used by distillation; MockLlmClient keys off this. */
 export const LLM_EXTRACT_INTENT = 'atomic knowledge units';
 
+/** Marker intent used by zone assignment; MockLlmClient keys off this. */
+export const LLM_ZONE_ASSIGN_INTENT = 'assign this memory to the most specific zone';
+
 /** Hard cap for any single LLM request so slow/unreachable providers can't hang the server. */
 const LLM_REQUEST_TIMEOUT_MS = 30_000;
 

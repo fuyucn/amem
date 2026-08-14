@@ -14,7 +14,7 @@ import {
 } from '@phosphor-icons/react';
 import { api } from '../api';
 import { PageHead } from '../components/PageHead';
-import type { ActivityEvent, ActivitySummary, Stats } from '../types';
+import type { ActivityEvent, ActivitySummary, Stats, Zone } from '../types';
 import { unitPath } from '../router';
 import { accessRows, flowCards } from '../flow';
 
@@ -184,7 +184,15 @@ function EmptyState() {
   );
 }
 
-export function Dashboard() {
+export function Dashboard({
+  zones = [],
+  activeZone = '',
+  onZoneChange,
+}: {
+  zones?: Zone[];
+  activeZone?: string;
+  onZoneChange?: (zoneId: string) => void;
+}) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [summary, setSummary] = useState<ActivitySummary | null>(null);
@@ -293,6 +301,32 @@ export function Dashboard() {
           ))}
         </div>
       </section>
+
+      {zones.length > 0 && (
+        <section className="panel">
+          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+            <h3 style={{ margin: 0 }}>Zones</h3>
+            <span className="muted">click a zone to filter Units / Search / Graph</span>
+            {activeZone && (
+              <button className="btn" onClick={() => onZoneChange?.('')}>Clear filter</button>
+            )}
+          </div>
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+            {zones.map((z) => (
+              <button
+                key={z.id}
+                className={`stat-chip ${activeZone === z.id ? 'chip-active' : ''}`}
+                onClick={() => onZoneChange?.(activeZone === z.id ? '' : z.id)}
+                title="Filters Units / Search / Graph to this zone"
+                style={{ cursor: 'pointer', border: activeZone === z.id ? '1.5px solid var(--accent)' : undefined }}
+              >
+                <div className="stat-chip-num">{fmt(z.unitCount)}</div>
+                <div className="stat-chip-lbl">{z.name || z.slug} <span className="badge">{z.kind}</span></div>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {insights.length > 0 && (
         <section className="suggest-row">

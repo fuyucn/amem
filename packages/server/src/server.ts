@@ -14,11 +14,30 @@ import type {
   ExportBundle,
   IngestInput,
   NewUnit,
+  OcrSettingsInput,
   ProviderTestResult,
   RecallInput,
 } from '@amem/core';
-import { AmemError, createEmbedder, createLlm, createService, renderOkfBundle } from '@amem/core';
-import { createSqliteStorageFromPath, openDatabase, migrate, type Storage } from '@amem/db';
+import {
+  AmemError,
+  accessibleZones,
+  createEmbedder,
+  createLlm,
+  createService,
+  proposeNewZones,
+  recomputeZoneCentroids,
+  renderOkfBundle,
+  requireRequestContext,
+  resolveExplicitZone,
+  type ProposeZonesOptions,
+} from '@amem/core';
+import {
+  createSqliteStorageFromPath,
+  openDatabase,
+  migrate,
+  seedDefaultZones,
+  type SqliteStorage,
+} from '@amem/db';
 import { createMcpServer } from '@amem/mcp';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { randomUUID } from 'node:crypto';
@@ -158,7 +177,7 @@ export async function createServer(
   }
   const authSecret = boot.secret;
   const rateLimiter = createRateLimiter(config.rateLimit);
-  const storage: Storage = await createSqliteStorageFromPath(config.dbPath, authSecret);
+  const storage: SqliteStorage = await createSqliteStorageFromPath(config.dbPath, authSecret);
   const service: AmemService = await createService(config, storage);
   // Swap the LLM at runtime from Settings; falls back to env → mock.
   const syncLlmFromProvider = async (): Promise<void> => {
@@ -229,20 +248,22 @@ export async function createServer(
   });
 
   // Auth + workspace context (ALS enterWith so storage sees workspace_id).
-  const { enterRequestContext } = await import('./authContext.js');
+  const { enterRequestContextWithZones, enterRequestContextWithZoneScope } = await import(
+    './authContext.js'
+  );
   app.addHook('onRequest', async (req, reply) => {
     const url = (req.url || '').split('?')[0] || '';
     const needsAuthContext = url.startsWith('/api/') || url.startsWith('/mcp');
     if (!needsAuthContext) return;
 
     if (url === '/api/v1/health') {
-      enterRequestContext({
+      enterRequestContextWithZones({
         workspaceId: DEFAULT_WORKSPACE_ID,
         workspaceSlug: DEFAULT_WORKSPACE_SLUG,
         scopes: ['read'],
         realm: 'anonymous',
         authEnabled: Boolean(config.authEnabled),
-      });
+      }, storage);
       return;
     }
 
@@ -267,6 +288,7 @@ export async function createServer(
       const workspaceHeader =
         (req.headers['x-amem-workspace'] as string | undefined) ||
         (req.headers['x-workspace'] as string | undefined);
+      const zoneHeader = (req.headers['x-amem-zone'] as string | undefined)?.trim();
       const resolved = resolveRequestAuth({
         config,
         store: authStore,
@@ -275,8 +297,20 @@ export async function createServer(
         authorization: req.headers.authorization,
         workspaceHeader,
       });
-      (req as { amemAuth?: typeof resolved }).amemAuth = resolved;
-      enterRequestContext(resolved.ctx);
+      let ctx = enterRequestContextWithZones(resolved.ctx, storage);
+      if (zoneHeader) {
+        const scoped = enterRequestContextWithZoneScope(ctx, storage, zoneHeader);
+        if (!scoped.ok) {
+          return reply.code(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: `zone '${zoneHeader}' does not exist or is not accessible in this workspace`,
+            },
+          });
+        }
+        ctx = scoped.ctx;
+      }
+      (req as { amemAuth?: typeof resolved }).amemAuth = { ...resolved, ctx };
     } catch (err) {
       // Only fall open when auth is fully off (no PAT system and no legacy token)
       // AND the request carries no credential and no explicit workspace intent.
@@ -289,13 +323,13 @@ export async function createServer(
         req.headers['x-amem-workspace'] || req.headers['x-workspace'],
       );
       if (openMode && !presentedCredential && !presentedWorkspace) {
-        enterRequestContext({
+        enterRequestContextWithZones({
           workspaceId: DEFAULT_WORKSPACE_ID,
           workspaceSlug: DEFAULT_WORKSPACE_SLUG,
           scopes: ['read', 'write', 'admin'],
           realm: 'anonymous',
           authEnabled: false,
-        });
+        }, storage);
         return;
       }
       // /mcp must reach the handler so it can emit OAuth WWW-Authenticate (RFC 9728).
@@ -307,7 +341,7 @@ export async function createServer(
           realm: 'anonymous',
           authEnabled: !openMode,
         };
-        enterRequestContext(anonCtx);
+        enterRequestContextWithZones(anonCtx, storage);
         (req as { amemAuth?: { ctx: RequestContext } }).amemAuth = { ctx: anonCtx };
         return;
       }
@@ -368,7 +402,36 @@ export async function createServer(
         hint: 'Health probe runs on the server main connection. Do not run host sqlite3 against a bind-mounted DB while Docker Amem is up.',
       };
     });
-    fastify.post('/ingest', async (req) => service.ingest(req.body as IngestInput));
+    fastify.post<{ Body: IngestInput & { zone?: string } }>('/ingest', async (req) => {
+      // REST convention uses `zone` (id or slug) like /recall and /search;
+      // normalize it to the service-level `zoneId` so a slug never leaks into
+      // the units table and an explicit partition is never silently ignored.
+      const { zone, ...rest } = req.body;
+      return service.ingest(zone ? { ...rest, zoneId: zone } : (rest as IngestInput));
+    });
+    fastify.post<{ Body?: { dryRun?: boolean } }>('/admin/reembed', async (req) => {
+      const resolved = (req as { amemAuth?: { ctx: RequestContext } }).amemAuth;
+      if (resolved?.ctx.authEnabled && resolved.ctx.realm === 'anonymous') {
+        throw new AmemError('UNAUTHORIZED', 'auth required for reembed');
+      }
+      if (
+        resolved?.ctx.authEnabled &&
+        resolved.ctx.userId &&
+        !hasScope(resolved.ctx, 'admin')
+      ) {
+        throw new AmemError('UNAUTHORIZED', 'admin scope required for reembed');
+      }
+      const result = await service.reembedAll({ dryRun: req.body?.dryRun });
+      storage
+        .recordEvent({
+          kind: 'maintenance_reembed',
+          summary: `Re-embed ${result.updated}/${result.scanned} units (${result.mode})`,
+          actor: resolved?.ctx.userId ?? 'amem',
+          meta: result,
+        })
+        .catch(() => {});
+      return result;
+    });
     fastify.post('/compact', async (req) => service.compact(req.body as CompactInput));
     fastify.post<{ Body: RecallInput }>('/recall', async (req) =>
       service.recall({
@@ -376,6 +439,8 @@ export async function createServer(
         tokenBudget: req.body.tokenBudget,
         topK: req.body.topK,
         includeBody: req.body.includeBody,
+        zone: req.body.zone,
+        crossZone: req.body.crossZone,
       }),
     );
     fastify.post<{ Body: RecallInput }>('/recall/layered', async (req) =>
@@ -384,6 +449,8 @@ export async function createServer(
         tokenBudget: req.body.tokenBudget,
         topK: req.body.topK,
         includeBody: req.body.includeBody,
+        zone: req.body.zone,
+        crossZone: req.body.crossZone,
       }),
     );
     fastify.get<{
@@ -396,6 +463,7 @@ export async function createServer(
         tag?: string;
         status?: string;
         fullText?: string;
+        zone?: string;
       };
     }>('/search', async (req) =>
       service.search(req.query.q, {
@@ -406,18 +474,24 @@ export async function createServer(
         tag: req.query.tag,
         status: req.query.status as never,
         fullText: req.query.fullText === '1' || req.query.fullText === 'true',
+        zone: req.query.zone,
       }),
     );
 
-    fastify.get<{ Querystring: Record<string, string | undefined> }>('/units', async (req) =>
-      service.listUnits({
+    fastify.get<{ Querystring: Record<string, string | undefined> }>('/units', async (req) => {
+      const zoneRef = req.query.zone;
+      const zoneId = zoneRef
+        ? (await storage.listZones()).find((z) => z.id === zoneRef || z.slug === zoneRef)?.id
+        : undefined;
+      return service.listUnits({
         type: req.query.type as NewUnit['type'],
         status: req.query.status as NewUnit['status'],
         tag: req.query.tag,
         category: req.query.category,
+        zoneId,
         limit: req.query.limit ? Number(req.query.limit) : undefined,
-      }),
-    );
+      });
+    });
     fastify.post<{ Body: { ids?: string[]; mode?: 'rules' | 'llm' | 'auto'; reclassify?: boolean } }>(
       '/units/classify',
       async (req) => service.classifyUnits(req.body ?? {}),
@@ -437,11 +511,14 @@ export async function createServer(
       if (!unit) throw new AmemError('NOT_FOUND', `Unit not found: ${req.params.id}`);
       return unit;
     });
-    fastify.post<{ Body: NewUnit & { unit?: NewUnit } }>('/units', async (req) => {
-      const body = req.body || ({} as NewUnit & { unit?: NewUnit });
-      const unit = (body.unit ? body.unit : body) as NewUnit;
+    fastify.post<{ Body: NewUnit & { unit?: NewUnit; zone?: string } }>('/units', async (req) => {
+      // REST convention uses `zone` (id or slug) like /ingest, /recall and
+      // /search; normalize it to the service-level `zoneId` so a slug never
+      // leaks into the units table and an explicit partition is never ignored.
+      const { zone, ...rest } = req.body || ({} as NewUnit & { unit?: NewUnit; zone?: string });
+      const unit = (rest.unit ? rest.unit : rest) as NewUnit;
       if (!unit || !unit.title) throw new AmemError('VALIDATION', 'unit.title required');
-      return service.saveUnit(unit);
+      return service.saveUnit(zone ? { ...unit, zoneId: zone } : unit);
     });
     fastify.patch<{ Params: { id: string }; Body: { patch: Partial<NewUnit>; reason?: string } }>(
       '/units/:id',
@@ -454,6 +531,203 @@ export async function createServer(
     fastify.post<{ Params: { id: string }; Body: { action: 'accept' | 'discard' } }>(
       '/units/:id/review',
       async (req) => service.reviewUnit(req.params.id, req.body.action),
+    );
+
+    // --- Zones: partitions + ACL (project scoping inside a workspace) ---
+    const zoneAuth = (req: object) => {
+      const resolved = (req as { amemAuth?: { ctx: RequestContext } }).amemAuth;
+      if (!resolved?.ctx.userId) throw new AmemError('UNAUTHORIZED', 'login/PAT required');
+      if (!hasScope(resolved.ctx, 'write')) {
+        throw new AmemError('UNAUTHORIZED', 'write scope required');
+      }
+      return resolved.ctx;
+    };
+
+    fastify.get('/zones', async (req) => {
+      const resolved = (req as { amemAuth?: { ctx: RequestContext } }).amemAuth;
+      const ctx = resolved?.ctx ?? requireRequestContext();
+      const zones = await accessibleZones(storage, ctx);
+      const members = new Map<string, number>();
+      const unitCounts = new Map<string, number>();
+      const units = await storage.allUnits();
+      for (const z of zones) {
+        members.set(z.id, (await storage.listZoneMembers(z.id)).length);
+        unitCounts.set(z.id, units.filter((u) => u.zoneId === z.id).length);
+      }
+      return zones.map((z) => ({
+        ...z,
+        memberCount: members.get(z.id) ?? 0,
+        unitCount: unitCounts.get(z.id) ?? 0,
+      }));
+    });
+
+    fastify.post<{
+      Body: {
+        slug?: string;
+        name?: string;
+        kind?: 'personal' | 'shared' | 'project' | 'inbox';
+        visibility?: 'private' | 'workspace' | 'members';
+        description?: string;
+      };
+    }>('/zones', async (req) => {
+      const ctx = zoneAuth(req);
+      const slug = String(req.body.slug || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-|-$/g, '');
+      if (!slug) throw new AmemError('VALIDATION', 'slug required');
+      const name = req.body.name?.trim() || slug;
+      const kind = req.body.kind ?? 'project';
+      if (!['personal', 'shared', 'project', 'inbox'].includes(kind)) {
+        throw new AmemError('VALIDATION', `invalid kind: ${kind}`);
+      }
+      const visibility = req.body.visibility ?? (kind === 'project' ? 'private' : 'workspace');
+      if (!['private', 'workspace', 'members'].includes(visibility)) {
+        throw new AmemError('VALIDATION', `invalid visibility: ${visibility}`);
+      }
+      const existing = (await storage.listZones()).find((z) => z.slug === slug);
+      if (existing) throw new AmemError('CONFLICT', `zone slug "${slug}" already exists`);
+      const zone = await storage.createZone({
+        workspaceId: ctx.workspaceId,
+        slug,
+        name,
+        kind,
+        visibility,
+        description: req.body.description?.trim() || undefined,
+        ownerUserId: ctx.userId,
+        auto: false,
+      });
+      if (visibility !== 'workspace') {
+        await storage.addZoneMember(zone.id, ctx.userId as string, 'owner');
+      }
+      storage
+        .recordEvent({
+          kind: 'zone_create',
+          summary: `Zone ${slug} created (${kind})`,
+          actor: ctx.userId,
+          meta: { slug, name, kind, visibility, zoneId: zone.id },
+        })
+        .catch(() => {});
+      return zone;
+    });
+
+    fastify.patch<{
+      Params: { id: string };
+      Body: {
+        name?: string;
+        visibility?: 'private' | 'workspace' | 'members';
+        description?: string;
+        status?: 'active' | 'archived';
+      };
+    }>('/zones/:id', async (req) => {
+      zoneAuth(req);
+      const zone = await storage.getZone(req.params.id);
+      if (!zone) throw new AmemError('NOT_FOUND', `Zone not found: ${req.params.id}`);
+      const next = {
+        ...zone,
+        name: req.body.name?.trim() || zone.name,
+        visibility: req.body.visibility ?? zone.visibility,
+        description: req.body.description !== undefined ? req.body.description : zone.description,
+        status: req.body.status ?? zone.status,
+        updatedAt: new Date().toISOString(),
+      };
+      await storage.updateZone(next);
+      return next;
+    });
+
+    fastify.delete<{ Params: { id: string } }>('/zones/:id', async (req) => {
+      zoneAuth(req);
+      const zone = await storage.getZone(req.params.id);
+      if (!zone) throw new AmemError('NOT_FOUND', `Zone not found: ${req.params.id}`);
+      const units = (await storage.allUnits()).filter((u) => u.zoneId === zone.id);
+      if (units.length > 0) {
+        throw new AmemError(
+          'CONFLICT',
+          `zone ${zone.slug} still holds ${units.length} unit(s); move them first`,
+        );
+      }
+      await storage.deleteZone(zone.id);
+      return { ok: true, zoneId: zone.id };
+    });
+
+    fastify.get<{ Params: { id: string } }>('/zones/:id/members', async (req) => {
+      zoneAuth(req);
+      const zone = await storage.getZone(req.params.id);
+      if (!zone) throw new AmemError('NOT_FOUND', `Zone not found: ${req.params.id}`);
+      return storage.listZoneMembers(zone.id);
+    });
+
+    fastify.post<{
+      Params: { id: string };
+      Body: { userId?: string; email?: string; role?: 'owner' | 'editor' | 'reader' };
+    }>('/zones/:id/members', async (req) => {
+      const ctx = zoneAuth(req);
+      const zone = await storage.getZone(req.params.id);
+      if (!zone) throw new AmemError('NOT_FOUND', `Zone not found: ${req.params.id}`);
+      let userId = req.body?.userId;
+      if (!userId && req.body?.email) {
+        const user = authStore.getUserByEmail(req.body.email);
+        userId = user?.id;
+      }
+      if (!userId) throw new AmemError('VALIDATION', 'userId or email required');
+      const role = req.body?.role ?? 'reader';
+      if (!['owner', 'editor', 'reader'].includes(role)) {
+        throw new AmemError('VALIDATION', `invalid role: ${role}`);
+      }
+      await storage.addZoneMember(zone.id, userId, role);
+      storage
+        .recordEvent({
+          kind: 'zone_member_add',
+          summary: `Member ${userId} added to zone ${zone.slug} as ${role}`,
+          actor: ctx.userId,
+          meta: { zoneId: zone.id, userId, role },
+        })
+        .catch(() => {});
+      return { ok: true, zoneId: zone.id, userId, role };
+    });
+
+    fastify.delete<{ Params: { id: string; userId: string } }>(
+      '/zones/:id/members/:userId',
+      async (req) => {
+        zoneAuth(req);
+        const zone = await storage.getZone(req.params.id);
+        if (!zone) throw new AmemError('NOT_FOUND', `Zone not found: ${req.params.id}`);
+        await storage.removeZoneMember(zone.id, req.params.userId);
+        return { ok: true, zoneId: zone.id, userId: req.params.userId };
+      },
+    );
+
+    fastify.post('/zones/recompute', async (req) => {
+      zoneAuth(req);
+      return recomputeZoneCentroids(storage, service.getEmbedder());
+    });
+
+    fastify.post<{ Body?: ProposeZonesOptions }>('/zones/proposals', async (req) => {
+      zoneAuth(req);
+      return proposeNewZones(storage, service.getEmbedder(), req.body ?? {});
+    });
+
+    fastify.post<{ Params: { id: string }; Body: { zoneId?: string; zoneSlug?: string } }>(
+      '/units/:id/zone',
+      async (req) => {
+        const ctx = zoneAuth(req);
+        const zoneRef = req.body?.zoneId ?? req.body?.zoneSlug;
+        if (!zoneRef) throw new AmemError('VALIDATION', 'zoneId or zoneSlug required');
+        const unit = await service.getUnit(req.params.id);
+        if (!unit) throw new AmemError('NOT_FOUND', `Unit not found: ${req.params.id}`);
+        const routed = await resolveExplicitZone(zoneRef, storage, ctx);
+        if (!routed) throw new AmemError('NOT_FOUND', `Zone not found or not accessible: ${zoneRef}`);
+        await storage.moveUnitZone(unit.id, routed.id);
+        storage
+          .recordEvent({
+            kind: 'zone_move',
+            summary: `Unit "${unit.title.slice(0, 60)}" moved to ${routed.slug}`,
+            actor: ctx.userId,
+            meta: { unitId: unit.id, zoneId: routed.id },
+          })
+          .catch(() => {});
+        return { ok: true, unitId: unit.id, zoneId: routed.id, zoneSlug: routed.slug };
+      },
     );
 
     fastify.get<{ Querystring: { clusters?: string; scenarios?: string } }>('/graph', async (req) =>
@@ -474,6 +748,28 @@ export async function createServer(
       const trace = await service.getTrace(req.params.id);
       if (!trace) throw new AmemError('NOT_FOUND', `Trace not found: ${req.params.id}`);
       return trace;
+    });
+    fastify.delete<{ Body?: { ids?: string[]; before?: string; all?: boolean } }>('/traces', async (req) => {
+      // Admin-only audit hygiene: purge probe/test noise from the trace log.
+      // Requires an explicit filter (ids / before) or all:true — no accidental
+      // full wipe. Traces are raw material, never secrets.
+      const resolved = (req as { amemAuth?: { ctx: RequestContext } }).amemAuth;
+      if (!resolved?.ctx.userId || !hasScope(resolved.ctx, 'admin')) {
+        throw new AmemError('FORBIDDEN', 'admin scope required to purge traces');
+      }
+      const body = req.body ?? {};
+      const { ids, before, all } = body;
+      if ((!ids || ids.length === 0) && !before && !all) {
+        throw new AmemError('VALIDATION', 'provide ids, before, or all:true');
+      }
+      const deleted = await service.deleteTraces({ ids, before, all });
+      await storage.recordEvent({
+        kind: 'admin_trace_purge',
+        summary: `Purged ${deleted} trace(s)`,
+        actor: resolved.ctx.userId,
+        meta: { ids: ids?.length ?? 0, before: before ?? null, all: !!all, deleted },
+      });
+      return { ok: true, deleted };
     });
     fastify.get<{ Querystring: { date?: string; budget?: number } }>(
       '/working-memory',
@@ -580,6 +876,41 @@ export async function createServer(
       '/import/directory',
       async (req) => service.importDirectory(req.body),
     );
+    fastify.post<{ Body: Parameters<AmemService['importPdf']>[0] }>(
+      '/import/pdf',
+      async (req) => service.importPdf(req.body),
+    );
+    fastify.post<{
+      Body: { filename: string; contentBase64: string; extract?: boolean; zone?: string };
+    }>('/ingest/file', async (req) => {
+      const { filename, contentBase64, extract, zone } = req.body;
+      if (!filename || !contentBase64) {
+        throw new AmemError('VALIDATION', 'filename and contentBase64 are required');
+      }
+      if (/\.pdf$/i.test(filename)) {
+        return service.importPdf({ filename, contentBase64, extract, zone });
+      }
+      const content = Buffer.from(contentBase64, 'base64').toString('utf8').trim();
+      if (!content) throw new AmemError('VALIDATION', 'file is empty or not decodable as UTF-8 text');
+      const result = await service.ingest({
+        title: filename,
+        content,
+        contentType: 'text/plain',
+        sourceUri: filename,
+        sourceKind: 'file',
+        extract: extract ?? true,
+        zoneId: zone,
+      });
+      return {
+        units: result.units.length,
+        traces: 1,
+        links: 0,
+        sources: 1,
+        files: 1,
+        sessions: 0,
+        tokensSavedByDedup: result.tokensSavedByDedup,
+      };
+    });
     fastify.post<{ Body: Parameters<AmemService['importCodebase']>[0] }>(
       '/import/codebase',
       async (req) => service.importCodebase(req.body),
@@ -777,12 +1108,26 @@ export async function createServer(
           .replace(/[^a-z0-9-]+/g, '-')
           .replace(/^-|-$/g, '');
         if (!slug) throw new AmemError('VALIDATION', 'slug required');
-        const ws = authStore.createWorkspace({
-          slug,
-          name: req.body.name || slug,
-          kind: req.body.kind === 'company' ? 'company' : 'personal',
-          ownerUserId: resolved.ctx.userId,
-        });
+        let ws;
+        try {
+          ws = authStore.createWorkspace({
+            slug,
+            name: req.body.name || slug,
+            kind: req.body.kind === 'company' ? 'company' : 'personal',
+            ownerUserId: resolved.ctx.userId,
+          });
+        } catch (err) {
+          // Duplicate slug must be a 409 CONFLICT (idempotent clients retry),
+          // not an unhandled 500 from the UNIQUE constraint.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes('UNIQUE constraint failed') && msg.includes('workspaces.slug')) {
+            throw new AmemError('CONFLICT', `workspace slug "${slug}" already exists`);
+          }
+          throw err;
+        }
+        // Every workspace gets the default partition skeleton (inbox/shared +
+        // the owner's personal zone); writes 500 without an inbox.
+        seedDefaultZones(authDb, ws.id);
         storage
           .recordEvent({
             kind: 'workspace_create',
@@ -828,6 +1173,8 @@ export async function createServer(
         throw new AmemError('VALIDATION', 'invalid role');
       }
       authStore.upsertMember(ws.id, user.id, role);
+      // New members need their personal zone; idempotent (INSERT OR IGNORE).
+      seedDefaultZones(authDb, ws.id);
       storage
         .recordEvent({
           kind: 'workspace_member_add',
@@ -1159,6 +1506,7 @@ export async function createServer(
 
     fastify.get('/ai/status', async () => {
       const active = await storage.getActiveProvider();
+      const dbOcr = await storage.getOcrSettings();
       const envConfigured = Boolean(config.llm.baseUrl && config.llm.model);
       const activeEmbedding = active?.baseUrl && active.embeddingModel;
       const embeddingModel = activeEmbedding
@@ -1180,7 +1528,74 @@ export async function createServer(
           mode: activeEmbedding ? 'api' : config.embedding.mode,
           model: embeddingModel,
         },
+        ocr: config.ocr?.baseUrl && config.ocr.model
+          ? { baseUrl: config.ocr.baseUrl, model: config.ocr.model, minChars: config.ocr.minChars }
+          : dbOcr
+            ? { baseUrl: dbOcr.baseUrl, model: dbOcr.model, minChars: dbOcr.minChars }
+            : null,
       };
+    });
+
+    // --- OCR settings (vision endpoint for scanned PDFs, admin-scoped) ---
+
+    fastify.get('/ocr/settings', async () => {
+      const settings = await storage.getOcrSettings();
+      if (!settings) return { settings: null };
+      const { apiKey, ...rest } = settings;
+      return {
+        settings: {
+          ...rest,
+          hasKey: Boolean(apiKey),
+          keyPrefix: apiKey ? `${apiKey.slice(0, 6)}…` : undefined,
+        },
+      };
+    });
+
+    fastify.put<{ Body: OcrSettingsInput }>('/ocr/settings', async (req) => {
+      requireProviderAdmin(req);
+      const actor = (req as { amemAuth?: { ctx: RequestContext } }).amemAuth?.ctx.userId ?? 'admin';
+      const body = req.body ?? {};
+      const baseUrl = String(body.baseUrl || '').trim().replace(/\/+$/, '');
+      const model = String(body.model || '').trim();
+      if (!baseUrl || !model) {
+        throw new AmemError('VALIDATION', 'baseUrl and model required');
+      }
+      const settings = await storage.upsertOcrSettings({
+        baseUrl,
+        model,
+        apiKey: body.apiKey ? String(body.apiKey).trim() : undefined,
+        minChars: body.minChars ?? 60,
+      });
+      storage
+        .recordEvent({
+          kind: 'ocr_settings_update',
+          summary: `OCR endpoint updated: ${settings.model} @ ${settings.baseUrl}`,
+          actor,
+          meta: { baseUrl: settings.baseUrl, model: settings.model },
+        })
+        .catch(() => {});
+      const { apiKey, ...rest } = settings;
+      return {
+        settings: {
+          ...rest,
+          hasKey: Boolean(apiKey),
+          keyPrefix: apiKey ? `${apiKey.slice(0, 6)}…` : undefined,
+        },
+      };
+    });
+
+    fastify.delete('/ocr/settings', async (req) => {
+      requireProviderAdmin(req);
+      const actor = (req as { amemAuth?: { ctx: RequestContext } }).amemAuth?.ctx.userId ?? 'admin';
+      await storage.deleteOcrSettings();
+      storage
+        .recordEvent({
+          kind: 'ocr_settings_update',
+          summary: 'OCR endpoint cleared',
+          actor,
+        })
+        .catch(() => {});
+      return { settings: null };
     });
   };
 

@@ -19,9 +19,10 @@ const config = mergeConfig({
 describe('@amem/mcp over InMemoryTransport', () => {
   let serverHandle: Awaited<ReturnType<typeof createMcpServer>>;
   let client: Client;
+  let storage: Awaited<ReturnType<typeof createSqliteStorageFromPath>>;
 
   beforeAll(async () => {
-    const storage = await createSqliteStorageFromPath(dbPath);
+    storage = await createSqliteStorageFromPath(dbPath);
     serverHandle = await createMcpServer(config, { storage });
     client = new Client({ name: 'amem-mcp-test', version: '1.0.0' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -74,6 +75,87 @@ describe('@amem/mcp over InMemoryTransport', () => {
     const text = result.content[0]?.type === 'text' ? result.content[0].text : '';
     expect(text).toBeTruthy();
     expect(JSON.parse(text).query).toBe('pnpm');
+  });
+
+  it('zone param routes writes and reads into one partition', async () => {
+    const zone = await storage.createZone({
+      workspaceId: 'ws_personal',
+      slug: 'mcp-proj',
+      name: 'MCP Proj',
+      kind: 'project',
+      visibility: 'workspace',
+    });
+
+    const ingest = await client.callTool({
+      name: 'ingest',
+      arguments: {
+        title: 'Zoned ingest probe',
+        content: 'MCP zone routing must place this fact inside the mcp-proj partition.',
+        zone: 'mcp-proj',
+      },
+    });
+    expect(ingest.isError).toBeFalsy();
+    const ingestParsed = JSON.parse(
+      ingest.content[0]?.type === 'text' ? ingest.content[0].text : '{}',
+    );
+    expect(ingestParsed.units.length).toBeGreaterThanOrEqual(1);
+    for (const u of ingestParsed.units) expect(u.zoneId).toBe(zone.id);
+
+    const save = await client.callTool({
+      name: 'save_unit',
+      arguments: {
+        unit: {
+          type: 'decision',
+          form: 'unit',
+          title: 'Zoned save probe',
+          body: 'Explicit zoneId on save_unit must be honored.',
+          zoneId: 'mcp-proj',
+        },
+      },
+    });
+    expect(save.isError).toBeFalsy();
+    const saved = JSON.parse(save.content[0]?.type === 'text' ? save.content[0].text : '{}');
+    expect(saved.zoneId).toBe(zone.id);
+
+    const listed = await client.callTool({
+      name: 'list_units',
+      arguments: { zone: 'mcp-proj' },
+    });
+    expect(listed.isError).toBeFalsy();
+    const listedParsed = JSON.parse(
+      listed.content[0]?.type === 'text' ? listed.content[0].text : '[]',
+    );
+    const titles = listedParsed.map((u: { title: string }) => u.title);
+    expect(titles).toContain('Zoned save probe');
+    expect(titles.some((t) => t.includes('MCP zone routing'))).toBe(true);
+    for (const u of listedParsed) expect(u.zoneId).toBe(zone.id);
+
+    const search = await client.callTool({
+      name: 'search',
+      arguments: { query: 'mcp-proj partition', zone: 'mcp-proj' },
+    });
+    expect(search.isError).toBeFalsy();
+    const searchParsed = JSON.parse(
+      search.content[0]?.type === 'text' ? search.content[0].text : '{}',
+    );
+    expect(searchParsed.items?.length).toBeGreaterThanOrEqual(1);
+
+    const recall = await client.callTool({
+      name: 'recall',
+      arguments: { query: 'Zoned save probe', zone: 'mcp-proj' },
+    });
+    expect(recall.isError).toBeFalsy();
+  });
+
+  it('tool schemas expose the zone parameter', async () => {
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t]));
+    for (const name of ['ingest', 'recall', 'recall_layered', 'search', 'list_units']) {
+      const schema = byName.get(name)?.inputSchema;
+      expect(schema, `${name} inputSchema`).toBeTruthy();
+      const props = (schema as { properties?: Record<string, unknown> })?.properties ?? {};
+      expect(props.zone, `${name} zone param`).toBeTruthy();
+    }
   });
 
   it('chains tools end-to-end for a real workflow', async () => {
@@ -190,5 +272,150 @@ describe('@amem/mcp over InMemoryTransport', () => {
     const callResult = JSON.parse(callText);
     expect(callResult.assetId).toBe(saved.id);
     expect(callResult.body).toContain('[truncated:');
+  });
+});
+
+describe('AMEM_ZONE env scoping', () => {
+  let envHandle: Awaited<ReturnType<typeof createMcpServer>>;
+  let envClient: Client;
+  let envStorage: Awaited<ReturnType<typeof createSqliteStorageFromPath>>;
+  let opsZoneId: string;
+  let researchZoneId: string;
+  const envDir = mkdtempSync(join(tmpdir(), 'amem-mcp-envzone-'));
+  const envDbPath = join(envDir, 'zone.db');
+  const envConfig = mergeConfig({
+    dbPath: envDbPath,
+    embedding: { mode: 'offline', dims: 64 },
+    jobs: { enabled: false },
+  });
+  const savedZoneEnv = process.env.AMEM_ZONE;
+
+  const seedUnit = async (zoneId: string, title: string, body: string) => {
+    const id = `seed-${zoneId}-${title}`.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+    await envStorage.createUnit({
+      id,
+      type: 'fact',
+      form: 'unit',
+      title,
+      summary: title,
+      body,
+      tags: [],
+      labels: {},
+      status: 'reviewed',
+      quality: 0.8,
+      confidence: 0.9,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sourceCount: 1,
+      importance: 0.5,
+      decay: 0,
+      version: 1,
+      zoneId,
+    });
+  };
+
+  beforeAll(async () => {
+    envStorage = await createSqliteStorageFromPath(envDbPath);
+    const ops = await envStorage.createZone({
+      workspaceId: 'ws_personal',
+      slug: 'ops',
+      name: 'Ops',
+      kind: 'project',
+      visibility: 'workspace',
+    });
+    const research = await envStorage.createZone({
+      workspaceId: 'ws_personal',
+      slug: 'research',
+      name: 'Research',
+      kind: 'project',
+      visibility: 'workspace',
+    });
+    opsZoneId = ops.id;
+    researchZoneId = research.id;
+    // A unit in the OTHER partition must stay invisible under AMEM_ZONE=ops.
+    await seedUnit(
+      researchZoneId,
+      'Research-only deployment note',
+      'This fact belongs to research, never ops.',
+    );
+
+    process.env.AMEM_ZONE = 'ops';
+    envHandle = await createMcpServer(envConfig, { storage: envStorage });
+    envClient = new Client({ name: 'amem-mcp-envzone-test', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await envHandle.server.connect(serverTransport);
+    await envClient.connect(clientTransport);
+  });
+
+  afterAll(async () => {
+    if (savedZoneEnv === undefined) delete process.env.AMEM_ZONE;
+    else process.env.AMEM_ZONE = savedZoneEnv;
+    await envClient?.close();
+    await envHandle?.close();
+    rmSync(envDir, { recursive: true, force: true });
+  });
+
+  it('save_unit without an explicit zone lands in the AMEM_ZONE partition', async () => {
+    const save = await envClient.callTool({
+      name: 'save_unit',
+      arguments: {
+        unit: {
+          type: 'decision',
+          form: 'unit',
+          title: 'Ops env write',
+          body: 'AMEM_ZONE must scope writes into the ops partition.',
+        },
+      },
+    });
+    expect(save.isError).toBeFalsy();
+    const saved = JSON.parse(save.content[0]?.type === 'text' ? save.content[0].text : '{}');
+    expect(saved.zoneId).toBe(opsZoneId);
+  });
+
+  it('read tools (get_graph / list_units / working_memory) are scoped to AMEM_ZONE', async () => {
+    const graph = await envClient.callTool({ name: 'get_graph', arguments: {} });
+    expect(graph.isError).toBeFalsy();
+    const graphParsed = JSON.parse(graph.content[0]?.type === 'text' ? graph.content[0].text : '{}');
+    const nodeTitles = (graphParsed.nodes ?? []).map((n: { title?: string }) => n.title ?? '');
+    expect(nodeTitles.some((t: string) => t.includes('Ops env write'))).toBe(true);
+    expect(nodeTitles.some((t: string) => t.includes('Research-only'))).toBe(false);
+
+    const listed = await envClient.callTool({ name: 'list_units', arguments: {} });
+    expect(listed.isError).toBeFalsy();
+    const listedParsed = JSON.parse(
+      listed.content[0]?.type === 'text' ? listed.content[0].text : '[]',
+    );
+    const listTitles = (listedParsed as Array<{ title: string }>).map((u) => u.title);
+    expect(listTitles).toContain('Ops env write');
+    expect(listTitles.some((t) => t.includes('Research-only'))).toBe(false);
+
+    const wm = await envClient.callTool({ name: 'working_memory', arguments: {} });
+    expect(wm.isError).toBeFalsy();
+    const wmText = wm.content[0]?.type === 'text' ? wm.content[0].text : '';
+    expect(wmText.includes('Research-only')).toBe(false);
+  });
+
+  it('recall restricted to AMEM_ZONE never leaks the other partition', async () => {
+    const recall = await envClient.callTool({
+      name: 'recall',
+      arguments: { query: 'Research-only deployment note', tokenBudget: 800 },
+    });
+    expect(recall.isError).toBeFalsy();
+    const rt = recall.content[0]?.type === 'text' ? recall.content[0].text : '';
+    const parsed = JSON.parse(rt);
+    expect(parsed.text.includes('Research-only')).toBe(false);
+  });
+
+  it('AMEM_ZONE pointing at a missing zone fails fast at startup', async () => {
+    const old = process.env.AMEM_ZONE;
+    process.env.AMEM_ZONE = 'does-not-exist';
+    try {
+      await expect(createMcpServer(envConfig, { storage: envStorage })).rejects.toThrow(
+        /AMEM_ZONE/,
+      );
+    } finally {
+      if (old === undefined) delete process.env.AMEM_ZONE;
+      else process.env.AMEM_ZONE = old;
+    }
   });
 });

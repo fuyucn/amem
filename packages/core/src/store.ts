@@ -9,6 +9,8 @@ import type {
   ActivityFilter,
   AiProvider,
   AiProviderInput,
+  OcrSettings,
+  OcrSettingsInput,
   Asset,
   AssetId,
   AssetKind,
@@ -33,6 +35,9 @@ import type {
   UnitType,
   Version,
   VersionId,
+  Zone,
+  ZoneMember,
+  NewZone,
 } from './domain.js';
 
 export interface UnitFilter {
@@ -58,6 +63,24 @@ export interface Storage {
   allUnits(): Promise<Unit[]>;
   /** Bulk update in one transaction (used by consolidation). */
   updateUnits(units: Unit[]): Promise<void>;
+  /** Refresh just the embedding vector (used by re-embed jobs). */
+  updateUnitEmbedding(
+    id: UnitId,
+    embedding: Unit['embedding'],
+    updatedAt?: string,
+  ): Promise<void>;
+
+  // --- Zones (workspace partitions) ---
+  listZones(): Promise<Zone[]>;
+  getZone(id: string): Promise<Zone | null>;
+  createZone(zone: NewZone): Promise<Zone>;
+  updateZone(zone: Zone): Promise<void>;
+  deleteZone(id: string): Promise<void>;
+  listZoneMembers(zoneId: string): Promise<ZoneMember[]>;
+  addZoneMember(zoneId: string, userId: string, role: ZoneMember['role']): Promise<void>;
+  removeZoneMember(zoneId: string, userId: string): Promise<void>;
+  /** Move a unit into another zone of the same workspace. */
+  moveUnitZone(unitId: UnitId, zoneId: string): Promise<void>;
 
   // --- Links (edges) ---
   createLink(link: Link): Promise<void>;
@@ -74,6 +97,7 @@ export interface Storage {
   createTrace(trace: Trace): Promise<void>;
   getTrace(id: TraceId): Promise<Trace | null>;
   listTraces(filter?: { sessionId?: SessionId; limit?: number }): Promise<Trace[]>;
+  deleteTraces(filter?: { ids?: string[]; before?: string; all?: boolean }): Promise<number>;
   upsertSession(session: { id: SessionId; label: string; agent?: string }): Promise<void>;
 
   // --- Sources / citations ---
@@ -165,6 +189,10 @@ export interface Storage {
   deleteProvider(id: string): Promise<void>;
   /** Activate exactly one provider (or none when `id` is null). */
   setActiveProvider(id: string | null): Promise<void>;
+  /** OCR endpoint configured from Settings; null when unset. */
+  getOcrSettings(): Promise<OcrSettings | null>;
+  upsertOcrSettings(settings: OcrSettingsInput): Promise<OcrSettings>;
+  deleteOcrSettings(): Promise<void>;
 
   // --- Lifetime ---
   transaction<T>(fn: () => Promise<T>): Promise<T>;

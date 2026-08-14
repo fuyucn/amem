@@ -60,6 +60,7 @@ async function invokeTool(
 
 function resolveEnvAuthContext(config: AmemConfig, dbPath: string): RequestContext {
   const workspaceSlug = process.env.AMEM_WORKSPACE || DEFAULT_WORKSPACE_SLUG;
+  const zoneRef = (process.env.AMEM_ZONE || '').trim();
   const token = process.env.AMEM_API_TOKEN || process.env.AMEM_PAT || '';
   // Default open context (auth disabled / no token)
   const anon: RequestContext = {
@@ -69,7 +70,11 @@ function resolveEnvAuthContext(config: AmemConfig, dbPath: string): RequestConte
     realm: 'anonymous',
     authEnabled: Boolean(config.authEnabled),
   };
-  if (!token) return anon;
+  if (!token && !zoneRef) return anon;
+  // AMEM_ZONE is an explicit access scope: a misconfigured value must fail
+  // loudly at startup instead of silently widening to the whole workspace.
+  const envZoneError = (msg: string) =>
+    new Error(`AMEM_ZONE='${zoneRef}' ${msg} — fix the env var or unset it`);
   try {
     const db = openDatabase(dbPath);
     migrate(db);
@@ -81,15 +86,39 @@ function resolveEnvAuthContext(config: AmemConfig, dbPath: string): RequestConte
       db.close();
       return anon;
     }
+    // Resolve the env zone scope against the resolved workspace. The zone id
+    // lands in ctx.zoneIds so every read/write tool is scoped at the storage
+    // layer (get_graph, working_memory, activity, ... — no per-tool params
+    // needed); write tools also route into it via resolveZoneForWrite.
+    let zoneIds: string[] | undefined;
+    if (zoneRef) {
+      const row = db
+        .prepare(
+          `SELECT id FROM zones WHERE workspace_id = ? AND status = 'active' AND (id = ? OR slug = ?)`,
+        )
+        .get(ws.id, zoneRef, zoneRef) as { id: string } | undefined;
+      if (!row) {
+        db.close();
+        throw envZoneError(`does not match any active zone in workspace '${ws.slug}'`);
+      }
+      zoneIds = [row.id];
+    }
+    const withZone = (ctx: RequestContext): RequestContext =>
+      zoneIds ? { ...ctx, zoneIds } : ctx;
+
+    if (!token) {
+      db.close();
+      return withZone({ ...anon, workspaceId: ws.id, workspaceSlug: ws.slug });
+    }
     if (config.apiToken && token === config.apiToken) {
       db.close();
-      return {
+      return withZone({
         workspaceId: ws.id,
         workspaceSlug: ws.slug,
         scopes: ['read', 'write', 'admin'],
         realm: 'legacy',
         authEnabled: true,
-      };
+      });
     }
     if (token.startsWith('amem_pat_')) {
       const secret = config.authSecret || '';
@@ -101,23 +130,23 @@ function resolveEnvAuthContext(config: AmemConfig, dbPath: string): RequestConte
       }
       if (!sec) {
         db.close();
-        return { ...anon, workspaceId: ws.id, workspaceSlug: ws.slug };
+        return withZone({ ...anon, workspaceId: ws.id, workspaceSlug: ws.slug });
       }
       const pat = auth.findPatByToken(sec, token);
       if (!pat) {
         db.close();
-        return { ...anon, workspaceId: ws.id, workspaceSlug: ws.slug, realm: 'anonymous' };
+        return withZone({ ...anon, workspaceId: ws.id, workspaceSlug: ws.slug, realm: 'anonymous' });
       }
       const scopes = JSON.parse(pat.scopes || '[]') as string[];
       db.close();
-      return {
+      return withZone({
         workspaceId: ws.id,
         workspaceSlug: ws.slug,
         userId: pat.user_id,
         scopes: scopes.length ? scopes : ['read', 'write'],
         realm: 'pat',
         authEnabled: true,
-      };
+      });
     }
     if (token.startsWith('amem_atk_')) {
       let sec = config.authSecret || '';
@@ -130,20 +159,21 @@ function resolveEnvAuthContext(config: AmemConfig, dbPath: string): RequestConte
         if (row) {
           const scopes = JSON.parse(row.scopes || '[]') as string[];
           db.close();
-          return {
+          return withZone({
             workspaceId: ws.id,
             workspaceSlug: ws.slug,
             userId: row.user_id,
             scopes: scopes.length ? scopes : ['read', 'write'],
             realm: 'user',
             authEnabled: true,
-          };
+          });
         }
       }
     }
     db.close();
-    return { ...anon, workspaceId: ws.id, workspaceSlug: ws.slug };
-  } catch {
+    return withZone({ ...anon, workspaceId: ws.id, workspaceSlug: ws.slug });
+  } catch (error) {
+    if (zoneRef && error instanceof Error && error.message.startsWith('AMEM_ZONE=')) throw error;
     return anon;
   }
 }
@@ -163,10 +193,11 @@ export async function createMcpServer(
     const baseUrl = (process.env.AMEM_BASE_URL || 'http://127.0.0.1:8321').replace(/\/$/, '');
     const token = process.env.AMEM_API_TOKEN || process.env.AMEM_PAT || config.apiToken || '';
     const workspace = process.env.AMEM_WORKSPACE || authCtx.workspaceSlug;
-    service = createHttpAmemService({ baseUrl, token, workspace });
+    const zone = process.env.AMEM_ZONE || authCtx.zoneIds?.[0];
+    service = createHttpAmemService({ baseUrl, token, workspace, zone });
     // Probe once so stdio fails fast if server is down.
     try {
-      const h = await httpHealth({ baseUrl, token, workspace });
+      const h = await httpHealth({ baseUrl, token, workspace, zone });
       if (!h.ok) console.error('[amem-mcp] HTTP backend health not ok', h);
       else console.error(`[amem-mcp] HTTP backend → ${baseUrl} (no local SQLite open)`);
     } catch (e) {
@@ -206,8 +237,9 @@ export async function createMcpServer(
           const baseUrl = (process.env.AMEM_BASE_URL || 'http://127.0.0.1:8321').replace(/\/$/, '');
           const token = process.env.AMEM_API_TOKEN || process.env.AMEM_PAT || config.apiToken || '';
           const workspace = process.env.AMEM_WORKSPACE || authCtx.workspaceSlug;
+          const zone = process.env.AMEM_ZONE || authCtx.zoneIds?.[0];
           try {
-            const h = await httpHealth({ baseUrl, token, workspace });
+            const h = await httpHealth({ baseUrl, token, workspace, zone });
             return {
               content: [{ type: 'text' as const, text: JSON.stringify(h) }],
               structuredContent: h as unknown as Record<string, unknown>,

@@ -77,6 +77,27 @@ describe('SqliteStorage', () => {
     await storage.close();
   });
 
+  it('updateUnitEmbedding refreshes only the vector', async () => {
+    const storage = await createSqliteStorageFromPath(tmpDb('emb2.db'));
+    await storage.createUnit(
+      unit({
+        id: 'u1',
+        title: 'Keep me',
+        embedding: { dims: 3, values: [0.1, 0.2, 0.3] },
+      }),
+    );
+    await storage.updateUnitEmbedding('u1', {
+      dims: 2,
+      values: [0.5, -0.5],
+    });
+    const after = (await storage.getUnit('u1'))!;
+    expect(after.title).toBe('Keep me');
+    expect(after.embedding!.dims).toBe(2);
+    expect(after.embedding!.values[0]).toBeCloseTo(0.5, 5);
+    expect(after.embedding!.values[1]).toBeCloseTo(-0.5, 5);
+    await storage.close();
+  });
+
   it('links: create, upsert, get, all, unique', async () => {
     const storage = await createSqliteStorageFromPath(tmpDb('link.db'));
     await storage.createUnit(unit());
@@ -257,6 +278,43 @@ describe('SqliteStorage', () => {
     const p = (await s2.listProviders())[0]!;
     expect(p.apiKey).toBeUndefined();
     await s2.close();
+  });
+
+  it('ocr_settings: singleton CRUD with encrypted key roundtrip', async () => {
+    const storage = await createSqliteStorageFromPath(tmpDb('ocr.db'), 'test-secret-16-chars');
+    expect(await storage.getOcrSettings()).toBeNull();
+
+    const created = await storage.upsertOcrSettings({
+      baseUrl: 'https://ocr.example.com/v1/',
+      model: 'vision-model',
+      apiKey: 'sk-ocr-secret-123456',
+      minChars: 80,
+    });
+    expect(created.baseUrl).toBe('https://ocr.example.com/v1');
+    expect(created.model).toBe('vision-model');
+    expect(created.apiKey).toBe('sk-ocr-secret-123456');
+    expect(created.minChars).toBe(80);
+
+    // Key is encrypted at rest (raw key must not appear in the row).
+    const raw = (storage as unknown as { db: import('better-sqlite3').Database }).db
+      .prepare('SELECT api_key FROM ocr_settings WHERE id = 1')
+      .get() as { api_key: string };
+    expect(raw.api_key).not.toContain('sk-ocr-secret-123456');
+    expect(raw.api_key.startsWith('enc:v1:')).toBe(true);
+
+    // Update without apiKey preserves the stored key; minChars clamps to >= 0.
+    const updated = await storage.upsertOcrSettings({
+      baseUrl: 'https://ocr.example.com/v1',
+      model: 'vision-model-2',
+      minChars: -5,
+    });
+    expect(updated.model).toBe('vision-model-2');
+    expect(updated.minChars).toBe(0);
+    expect(updated.apiKey).toBe('sk-ocr-secret-123456');
+
+    await storage.deleteOcrSettings();
+    expect(await storage.getOcrSettings()).toBeNull();
+    await storage.close();
   });
 
   it('L2 scenarios: CRUD + tag filter', async () => {

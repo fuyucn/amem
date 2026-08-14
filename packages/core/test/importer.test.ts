@@ -5,10 +5,36 @@ import { describe, expect, it } from 'vitest';
 import {
   importCodebase,
   importDirectory,
+  importPdf,
   importSessions,
   type ImporterDeps,
 } from '../src/index.js';
 import { FakeStorage, makeUnit } from './helpers.js';
+
+function minimalPdf(text: string): Buffer {
+  const esc = text.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+  const objs: Record<number, string> = {
+    1: '<< /Type /Catalog /Pages 2 0 R >>',
+    2: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    3: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    5: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  };
+  const stream = `BT /F1 24 Tf 72 720 Td (${esc}) Tj ET`;
+  objs[4] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  for (let i = 1; i <= 5; i += 1) {
+    offsets[i] = pdf.length;
+    pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 6\n0000000000 65535 f \n`;
+  for (let i = 1; i <= 5; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return Buffer.from(pdf, 'latin1');
+}
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'amem-import-'));
@@ -74,6 +100,62 @@ describe('importDirectory', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('importPdf', () => {
+  it('extracts text from a PDF and ingests it as chunks', async () => {
+    const storage = new FakeStorage();
+    const pdf = minimalPdf('Amem import pipeline\n\nPDF text extraction works end to end.');
+    const result = await importPdf(deps(storage), {
+      filename: 'guide.pdf',
+      contentBase64: pdf.toString('base64'),
+    });
+    expect(result.files).toBe(1);
+    expect(result.sources).toBeGreaterThan(0);
+    expect(result.units).toBeGreaterThan(0);
+    const units = await storage.listUnits();
+    expect(units.map((u) => u.summary).join('\n')).toMatch(/PDF text extraction/);
+  });
+
+  it('falls back to OCR when the text layer is missing', async () => {
+    const storage = new FakeStorage();
+    const pdf = minimalPdf('');
+    const d = deps(storage);
+    d.ocr = {
+      recognize: async () =>
+        '# Vesta\n\nAsteroid mining economics: 4Vesta nickel reserves are the cheapest in the belt.',
+    };
+    const result = await importPdf(d, {
+      filename: 'scan.pdf',
+      contentBase64: pdf.toString('base64'),
+    });
+    expect(result.ocrPages).toBe(1);
+    expect(result.units).toBeGreaterThan(0);
+    const units = await storage.listUnits();
+    expect(units.map((u) => u.summary).join('\n')).toMatch(/4Vesta nickel/);
+  });
+
+  it('skips scanned PDFs when no OCR client is configured', async () => {
+    const storage = new FakeStorage();
+    const pdf = minimalPdf('');
+    const result = await importPdf(deps(storage), {
+      filename: 'scan.pdf',
+      contentBase64: pdf.toString('base64'),
+    });
+    expect(result.units).toBe(0);
+    expect(result.ocrPages).toBeUndefined();
+  });
+
+  it('rejects oversized payloads', async () => {
+    const storage = new FakeStorage();
+    await expect(
+      importPdf(deps(storage), {
+        filename: 'big.pdf',
+        contentBase64: Buffer.alloc(1024, 97).toString('base64'),
+        maxBytes: 128,
+      }),
+    ).rejects.toThrow(/too large/i);
   });
 });
 

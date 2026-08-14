@@ -11,6 +11,7 @@ describe('parsePath', () => {
     const paths: Array<[string, string]> = [
       ['/dashboard', 'dashboard'],
       ['/activity', 'activity'],
+      ['/zones', 'zones'],
       ['/graph', 'graph'],
       ['/search', 'search'],
       ['/units', 'units'],

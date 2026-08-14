@@ -25,6 +25,36 @@ export function normalizeText(s: string): string {
     .trim();
 }
 
+/** Token-level overlap stats between two titles (Jaccard + longest shared token). */
+export function titleTokenOverlap(
+  a: string,
+  b: string,
+): { jaccard: number; longestShared: number } {
+  const ta = new Set(normalizeText(a).split(/\s+/).filter(Boolean));
+  const tb = new Set(normalizeText(b).split(/\s+/).filter(Boolean));
+  if (ta.size === 0 || tb.size === 0) return { jaccard: 0, longestShared: 0 };
+  let shared = 0;
+  let longest = 0;
+  for (const t of ta) {
+    if (tb.has(t)) {
+      shared++;
+      if (t.length > longest) longest = t.length;
+    }
+  }
+  return { jaccard: shared / (ta.size + tb.size - shared), longestShared: longest };
+}
+
+/**
+ * Hard gate for embedding-based dedup: two titles must share real words.
+ * The offline hash embedder is a coarse projection, so cosine alone can
+ * falsely merge unrelated texts; requiring lexical overlap keeps merges on
+ * the same topic while still allowing paraphrase-heavy matches.
+ */
+export function hasTokenOverlap(a: string, b: string, minTokenLength = 4, minJaccard = 0.3): boolean {
+  const { jaccard, longestShared } = titleTokenOverlap(a, b);
+  return jaccard >= minJaccard || longestShared >= minTokenLength;
+}
+
 /**
  * Find the existing unit most similar to the candidate, if any passes the
  * threshold. Pure and deterministic.
@@ -32,12 +62,14 @@ export function normalizeText(s: string): string {
  * Two-stage matching for accuracy:
  * 1. Normalized-text exact match on title (length >= 6 chars) — a strong
  *    signal that the same knowledge was distilled again, no embedding needed.
- * 2. Embedding cosine similarity above `threshold`.
+ * 2. Embedding cosine similarity above `threshold` AND lexical token overlap
+ *    (see hasTokenOverlap) so unrelated high-cosine texts are never merged.
  */
 export function findDuplicate(
   candidate: EmbeddableCandidate,
   existing: Unit[],
   threshold: number,
+  opts: { minTokenLength?: number; minJaccard?: number } = {},
 ): DuplicateMatch | null {
   const norm = normalizeText(candidate.title);
   if (norm.length >= 6) {
@@ -52,7 +84,11 @@ export function findDuplicate(
   for (const unit of existing) {
     if (!unit.embedding) continue;
     const sim = cosine(candidate.embedding.values, unit.embedding.values);
-    if (sim >= threshold && (!best || sim > best.similarity)) {
+    if (
+      sim >= threshold &&
+      hasTokenOverlap(candidate.title, unit.title, opts.minTokenLength, opts.minJaccard) &&
+      (!best || sim > best.similarity)
+    ) {
       best = { unit, similarity: sim };
     }
   }

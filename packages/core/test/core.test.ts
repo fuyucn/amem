@@ -13,7 +13,7 @@ import {
   mergeConfig,
   type AmemConfig, type Unit, type ExportBundle,
 } from '../src/index.js';
-import { FakeStorage, makeUnit, iso } from './helpers.js';
+import { FakeStorage, makeUnit, iso, seedDefaultZones } from './helpers.js';
 
 function testConfig(): AmemConfig {
   return mergeConfig({
@@ -59,6 +59,39 @@ describe('dedup', () => {
     // findDuplicate may be title+keyword based; just assert it runs and returns object or null
     expect(dup === null || 'unit' in dup).toBe(true);
     void sim;
+  });
+  it('findDuplicate rejects high-cosine unrelated titles (offline false-merge regression)', () => {
+    const existing: Unit = makeUnit({
+      id: 'paris',
+      title: 'Alice lives in Paris and enjoys fresh croissants',
+      embedding: { dims: 64, values: Array.from({ length: 64 }, (_, i) => (i % 2 === 0 ? 1 : 0)) },
+    });
+    // Identical vector => cosine 1, far above any threshold, but zero shared words.
+    const dup = findDuplicate(
+      {
+        title: 'Amem PDF endpoint guide for importing files into the graph',
+        embedding: { dims: 64, values: Array.from({ length: 64 }, (_, i) => (i % 2 === 0 ? 1 : 0)) },
+      },
+      [existing],
+      0.5,
+    );
+    expect(dup).toBeNull();
+  });
+  it('findDuplicate still merges same-topic titles that share real words', () => {
+    const existing: Unit = makeUnit({
+      id: 'react',
+      title: 'React state management with hooks',
+      embedding: { dims: 64, values: Array.from({ length: 64 }, (_, i) => (i % 2 === 0 ? 1 : 0)) },
+    });
+    const dup = findDuplicate(
+      {
+        title: 'React state management patterns and pitfalls',
+        embedding: { dims: 64, values: Array.from({ length: 64 }, (_, i) => (i % 2 === 0 ? 1 : 0)) },
+      },
+      [existing],
+      0.5,
+    );
+    expect(dup?.unit.id).toBe('react');
   });
   it('mergeUnits combines body and bumps quality', () => {
     const a = makeUnit({ id: 'x', body: 'first', quality: 0.7 });
@@ -382,6 +415,7 @@ describe('okf export', () => {
 describe('service (offline ingest -> recall)', () => {
   it('ingests content, persists units, and recalls them', async () => {
     const storage = new FakeStorage();
+    await seedDefaultZones(storage);
     const service = await createService(cfg, storage);
     const health = service.health();
     expect(health.ok).toBe(true);

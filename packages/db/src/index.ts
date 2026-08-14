@@ -1,5 +1,6 @@
 export type { Storage } from '@amem/core';
 export { migrate, openDatabase, configureSqliteConnection, ensureSqliteHealthy } from './schema.js';
+export { seedDefaultZones } from './seedZones.js';
 export {
   createSqliteStorage,
   createSqliteStorageFromPath,

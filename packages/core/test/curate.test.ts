@@ -6,7 +6,7 @@ import {
   LLM_CLASSIFY_INTENT,
   type AmemConfig,
 } from '../src/index.js';
-import { FakeStorage, iso, makeUnit } from './helpers.js';
+import { FakeStorage, makeUnit } from './helpers.js';
 
 function testConfig(): AmemConfig {
   return mergeConfig({

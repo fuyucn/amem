@@ -940,6 +940,11 @@ input:hover, textarea:hover, select:hover { border-color: #333b4a; }
   border-radius: 50%;
   flex: 0 0 auto;
 }
+.legend-chip.chip-active {
+  border-color: var(--accent);
+  color: var(--fg);
+  box-shadow: 0 0 0 1px var(--accent);
+}
 
 ul.dots li {
   border-bottom-color: #232936;
@@ -1128,3 +1133,26 @@ ul.dots li {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* ---------- zones view ---------- */
+.zone-cards { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.zone-card { display: flex; flex-direction: column; gap: 10px; }
+.card-head {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.list { list-style: none; margin: 8px 0 0; padding: 0; }
+.list li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.list li:last-child { border-bottom: none; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.small { font-size: 12px; }
+.badge.muted { opacity: 0.55; }
+.btn.danger { outline-color: var(--danger); }
+.btn.ghost { outline: 1px solid var(--border); background: transparent; }
+.btn.small { padding: 2px 10px; font-size: 12px; }
+.grow { flex: 1; min-width: 140px; }
+.row.between { justify-content: space-between; }

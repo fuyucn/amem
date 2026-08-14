@@ -14,14 +14,19 @@ import type {
   ContextItem,
   LayeredRecallResult,
   RecallInput,
+  RoutedZone,
   Scenario,
   Source,
   Unit,
   UnitSummary,
+  Zone,
 } from './domain.js';
 import type { Storage } from './store.js';
 import type { Embedder } from './embedder.js';
-import { codeSymbolAdjustment } from './recall.js';
+import type { RequestContext } from './requestContext.js';
+import { requireRequestContext, runWithRequestContextAsync } from './requestContext.js';
+import { codeSymbolAdjustment, routeZone } from './recall.js';
+import { accessibleZones, resolveExplicitZone } from './zones.js';
 import { cosine } from './lib/vector.js';
 import { countTokens } from './lib/tokenizer.js';
 import { isNearDuplicateOf } from './lib/recallSelect.js';
@@ -80,15 +85,40 @@ function unitBlock(unit: UnitSummary, body: string | undefined, sources: Source[
   return lines.join('\n');
 }
 
+function scopeUnits(units: Unit[], ctx: RequestContext): Unit[] {
+  if (!ctx.zoneIds || ctx.zoneIds.length === 0) return units;
+  const allowed = new Set(ctx.zoneIds);
+  return units.filter((u) => u.zoneId && allowed.has(u.zoneId));
+}
+
+function scopeScenarios(
+  scenarios: Scenario[],
+  units: Unit[],
+  ctx: RequestContext,
+): Scenario[] {
+  if (!ctx.zoneIds || ctx.zoneIds.length === 0) return scenarios;
+  const allowed = new Set(ctx.zoneIds);
+  const unitZone = new Map(units.map((u) => [u.id, u.zoneId]));
+  return scenarios.filter((s) =>
+    s.sourceUnitIds.some((id) => {
+      const zid = unitZone.get(id);
+      return zid !== undefined && allowed.has(zid);
+    }),
+  );
+}
+
 /**
  * Layered recall. Budget split: persona ~15%, scenarios ~35%, units ~50%,
  * then L1 detail spills into whatever remains. Never throws.
  */
-export async function layeredRecall(
+async function layeredRecallInner(
   storage: Storage,
   embed: Embedder,
   config: AmemConfig,
   input: RecallInput,
+  ctx: RequestContext,
+  routed: RoutedZone | undefined,
+  zonesById: Map<string, Zone>,
 ): Promise<LayeredRecallResult> {
   const budget = input.tokenBudget ?? config.thresholds.recallBudget;
   const topK = input.topK ?? 10;
@@ -112,7 +142,13 @@ export async function layeredRecall(
   }
 
   // L2 — compact scenario blocks, best keyword matches first.
-  const scenarios = await storage.listScenarios({ status: 'active', limit: 50 });
+  const queryVecForScenarios = await embed.embed(input.query);
+  const all = scopeUnits(await storage.allUnitsWithEmbeddings(), ctx);
+  const scenarios = scopeScenarios(
+    await storage.listScenarios({ status: 'active', limit: 50 }),
+    all,
+    ctx,
+  );
   const scoredScenarios = scenarios
     .map((s) => ({ scenario: s, ...scenarioScore(input.query, s) }))
     .filter((s) => s.score > 0)
@@ -130,8 +166,7 @@ export async function layeredRecall(
   }
 
   // L1 — precise units with citations, gated by the unit slice.
-  const queryVec = await embed.embed(input.query);
-  const all = await storage.allUnitsWithEmbeddings();
+  const queryVec = queryVecForScenarios;
   const coveredScenarioUnits = new Set(selectedScenarios.flatMap((s) => s.scenario.sourceUnitIds));
   const scored: Array<{ unit: Unit; score: number; reason: string }> = [];
   for (const unit of all) {
@@ -189,7 +224,17 @@ export async function layeredRecall(
     if (used + tokens > budget) break;
     used += tokens;
     textParts.push(block);
-    items.push({ unit: toUnitSummary(unit), score, reason, citations: sources });
+    const summary = toUnitSummary(unit);
+    const zone = summary.zoneId ? zonesById.get(summary.zoneId) : undefined;
+    items.push({
+      unit: zone ? { ...summary, zoneSlug: zone.slug, zoneName: zone.name } : summary,
+      score,
+      reason,
+      citations: sources,
+      zoneId: summary.zoneId,
+      zoneSlug: zone?.slug,
+      zoneName: zone?.name,
+    });
     grounded = true;
     if (items.length >= topK) break;
   }
@@ -204,5 +249,50 @@ export async function layeredRecall(
     text: textParts.join('\n\n'),
     grounded,
     deduplicated,
+    routedZone: routed,
   };
+}
+
+/**
+ * Layered recall with zone routing: explicit zone or auto-route narrows the
+ * whole assembly to one partition; otherwise the accessible zone set applies.
+ */
+export async function layeredRecall(
+  storage: Storage,
+  embed: Embedder,
+  config: AmemConfig,
+  input: RecallInput,
+): Promise<LayeredRecallResult> {
+  const ctx = requireRequestContext();
+  const zones = await accessibleZones(storage, ctx);
+  const zonesById = new Map(zones.map((z) => [z.id, z]));
+  const explicit = input.zone ? await resolveExplicitZone(input.zone, storage, ctx) : null;
+  if (explicit) {
+    return runWithRequestContextAsync({ ...ctx, zoneIds: [explicit.id] }, () =>
+      layeredRecallInner(storage, embed, config, input, { ...ctx, zoneIds: [explicit.id] }, explicit, zonesById),
+    );
+  }
+  // crossZone=true skips auto-routing and assembles from the full accessible
+  // zone set. Default keeps routing (routed zone + inbox, weak-match fallback).
+  const routed = input.crossZone ? null : await routeZone(input.query, ctx, storage, embed);
+  if (routed) {
+    // Same routing policy as recall(): the auto-routed zone plus the
+    // workspace inbox stay in the candidate pool; everything else remains
+    // isolated so unassigned memory is never unreachable.
+    const scopeIds = new Set<string>([routed.id]);
+    for (const zone of zones) {
+      if (zone.kind === 'inbox') scopeIds.add(zone.id);
+    }
+    const routedScope = [...scopeIds];
+    const scoped = await runWithRequestContextAsync({ ...ctx, zoneIds: routedScope }, () =>
+      layeredRecallInner(storage, embed, config, input, { ...ctx, zoneIds: routedScope }, routed, zonesById),
+    );
+    // Routing is a preference, not a hard filter (same policy as recall()):
+    // weak top match inside the auto-routed zone falls back to all zones.
+    if (scoped.units[0]?.score !== undefined && scoped.units[0].score >= 0.35) {
+      return scoped;
+    }
+    return layeredRecallInner(storage, embed, config, input, ctx, routed, zonesById);
+  }
+  return layeredRecallInner(storage, embed, config, input, ctx, undefined, zonesById);
 }

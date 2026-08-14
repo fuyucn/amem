@@ -7,9 +7,9 @@ import type {
   AssetStatus,
   AssetVersion,
   ActivityEvent,
-  IsoDate, Link, SessionId, Source, StatsCounts, Storage, Trace, TraceId, Unit, UnitId,
+  IsoDate, Link, NewZone, SessionId, Source, StatsCounts, Storage, Trace, TraceId, Unit, UnitId,
   UnitSource, UnitSummary, UnitType, Version, VersionId, Persona, Scenario, ScenarioId,
-  ScenarioStatus,
+  ScenarioStatus, Zone, ZoneMember,
 } from '../src/domain.js';
 
 function iso(d: Date = new Date()): IsoDate {
@@ -35,6 +35,8 @@ export class FakeStorage implements Storage {
   assetVersions = new Map<AssetId, AssetVersion[]>();
   jobs: Array<{ id: string; kind: string; status: string }> = [];
   events: Array<{ kind: string; summary: string; meta?: Record<string, unknown> }> = [];
+  zones = new Map<string, Zone>();
+  zoneMembers = new Map<string, ZoneMember[]>();
 
   async dbHealth(): Promise<{ ok: boolean; status: string; journal: string; units: number }> {
     return { ok: true, status: 'ok', journal: 'truncate', units: this.units.size };
@@ -65,7 +67,8 @@ export class FakeStorage implements Storage {
     arr = arr.slice(filter?.offset ?? 0, (filter?.offset ?? 0) + (filter?.limit ?? 50));
     return arr.map((u) => ({
       id: u.id, type: u.type, form: u.form, title: u.title, summary: u.summary,
-      tags: u.tags, importance: u.importance, decay: u.decay, status: u.status, updatedAt: u.updatedAt,
+      tags: u.tags, zoneId: u.zoneId, createdByUserId: u.createdByUserId,
+      importance: u.importance, decay: u.decay, status: u.status, updatedAt: u.updatedAt,
     }));
   }
   async allUnitsWithEmbeddings(limit?: number): Promise<Unit[]> {
@@ -77,6 +80,7 @@ export class FakeStorage implements Storage {
       .filter((u) => u.status !== 'archived')
       .map((u) => {
         const { embedding: _embedding, ...light } = this.wrap(u);
+        void _embedding;
         return light as Unit;
       });
   }
@@ -95,6 +99,14 @@ export class FakeStorage implements Storage {
         }),
       );
     }
+  }
+  async updateUnitEmbedding(
+    id: UnitId,
+    embedding: Unit['embedding'],
+  ): Promise<void> {
+    const existing = this.units.get(id);
+    if (!existing) return;
+    this.units.set(id, this.wrap({ ...existing, embedding }));
   }
   async sourceCountsByUnit(): Promise<Map<string, number>> {
     const out = new Map<string, number>();
@@ -303,6 +315,63 @@ export class FakeStorage implements Storage {
   }
   async close(): Promise<void> {}
 
+  // --- Zones ---
+  async listZones(): Promise<Zone[]> {
+    return [...this.zones.values()].map((z) => clone(z));
+  }
+  async getZone(id: string): Promise<Zone | null> {
+    const z = this.zones.get(id);
+    return z ? clone(z) : null;
+  }
+  async createZone(zone: NewZone): Promise<Zone> {
+    const now = iso();
+    const full: Zone = {
+      id: `z_${this.zones.size + 1}`,
+      workspaceId: zone.workspaceId,
+      slug: zone.slug,
+      name: zone.name,
+      kind: zone.kind,
+      ownerUserId: zone.ownerUserId,
+      visibility: zone.visibility ?? 'private',
+      description: zone.description,
+      embeddingCentroid: zone.embeddingCentroid,
+      auto: zone.auto ?? false,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.zones.set(full.id, full);
+    return clone(full);
+  }
+  async updateZone(zone: Zone): Promise<void> {
+    this.zones.set(zone.id, clone(zone));
+  }
+  async deleteZone(id: string): Promise<void> {
+    this.zones.delete(id);
+  }
+  async listZoneMembers(zoneId: string): Promise<ZoneMember[]> {
+    return (this.zoneMembers.get(zoneId) ?? []).map((m) => clone(m));
+  }
+  async addZoneMember(zoneId: string, userId: string, role: ZoneMember['role']): Promise<void> {
+    const list = this.zoneMembers.get(zoneId) ?? [];
+    if (!list.some((m) => m.userId === userId)) {
+      list.push({ zoneId, userId, role, createdAt: iso() });
+      this.zoneMembers.set(zoneId, list);
+    }
+  }
+  async removeZoneMember(zoneId: string, userId: string): Promise<void> {
+    this.zoneMembers.set(
+      zoneId,
+      (this.zoneMembers.get(zoneId) ?? []).filter((m) => m.userId !== userId),
+    );
+  }
+  async moveUnitZone(unitId: UnitId, zoneId: string): Promise<void> {
+    const u = this.units.get(unitId);
+    if (u) {
+      this.units.set(unitId, this.wrap({ ...u, zoneId }));
+    }
+  }
+
   // --- AI providers ---
   providers = new Map<string, AiProvider>();
   async listProviders(): Promise<AiProvider[]> {
@@ -348,6 +417,30 @@ export function makeUnit(over: Partial<Unit>): Unit {
     createdAt: iso(), updatedAt: iso(), sourceCount: 0, importance: 0.5, decay: 1, version: 1,
     ...over,
   };
+}
+
+/** Seed the production default zones (inbox + shared) for a workspace. */
+export async function seedDefaultZones(
+  storage: Storage,
+  workspaceId = 'ws_personal',
+): Promise<{ inbox: Zone; shared: Zone }> {
+  const inbox = await storage.createZone({
+    workspaceId,
+    slug: 'inbox',
+    name: 'Inbox',
+    kind: 'inbox',
+    visibility: 'workspace',
+    description: 'Uncategorized memory awaiting assignment',
+  });
+  const shared = await storage.createZone({
+    workspaceId,
+    slug: 'shared',
+    name: 'Shared',
+    kind: 'shared',
+    visibility: 'workspace',
+    description: 'Shared across all workspace members',
+  });
+  return { inbox, shared };
 }
 
 export { iso };

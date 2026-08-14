@@ -38,6 +38,7 @@ export const DEFAULT_CONFIG: AmemConfig = {
     dims: 64,
   },
   llm: { baseUrl: undefined, model: undefined, apiKey: undefined },
+  ocr: { baseUrl: undefined, apiKey: undefined, model: undefined, minChars: 60 },
   thresholds: {
     minSourcesForCrystal: 3,
     dedupSimThreshold: 0.9,
@@ -120,6 +121,12 @@ export function configFromEnv(): AmemConfig {
       model: env('AMEM_LLM_MODEL'),
       apiKey: env('AMEM_LLM_API_KEY'),
     },
+    ocr: {
+      baseUrl: env('AMEM_OCR_BASE_URL') || undefined,
+      apiKey: env('AMEM_OCR_API_KEY') || undefined,
+      model: env('AMEM_OCR_MODEL') || undefined,
+      minChars: num(env('AMEM_OCR_MIN_CHARS'), DEFAULT_CONFIG.ocr?.minChars ?? 60),
+    },
     thresholds: {
       minSourcesForCrystal: num(
         env('AMEM_MIN_SOURCES_FOR_CRYSTAL'),
@@ -196,6 +203,7 @@ export function mergeConfig(partial?: Partial<AmemConfig>): AmemConfig {
     ...partial,
     embedding: { ...base.embedding, ...partial.embedding },
     llm: { ...base.llm, ...partial.llm },
+    ocr: { ...base.ocr, ...partial.ocr },
     thresholds: { ...base.thresholds, ...partial.thresholds },
     jobs: { ...base.jobs, ...partial.jobs },
     rateLimit: { ...base.rateLimit, ...partial.rateLimit },

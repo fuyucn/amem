@@ -13,11 +13,14 @@ import { PersonaView } from './views/Persona';
 import { WorkingMemory } from './views/WorkingMemory';
 import { Review } from './views/Review';
 import { Settings } from './views/Settings';
+import { Zones } from './views/Zones';
 import { canonicalPath, DEFAULT_TAB, parsePath, tabPath, unitPath, type Route, type Tab } from './router';
+import type { Zone } from './types';
 
 const TABS: Array<{ id: Tab; label: string; path: string }> = [
   { id: 'dashboard', label: 'Overview', path: '/dashboard' },
   { id: 'activity', label: 'Activity', path: '/activity' },
+  { id: 'zones', label: 'Zones', path: '/zones' },
   { id: 'graph', label: 'Graph', path: '/graph' },
   { id: 'search', label: 'Search', path: '/search' },
   { id: 'units', label: 'Units', path: '/units' },
@@ -36,6 +39,7 @@ const NAV_SECTIONS: Array<{ label: string; tabs: Array<{ id: Tab; label: string;
     tabs: [
       { id: 'dashboard', label: 'Overview', hint: 'Stats · data flow' },
       { id: 'activity', label: 'Activity', hint: 'Live feed' },
+      { id: 'zones', label: 'Zones', hint: 'Partitions · access' },
     ],
   },
   {
@@ -68,6 +72,7 @@ const NAV_SECTIONS: Array<{ label: string; tabs: Array<{ id: Tab; label: string;
 const TAB_TITLES: Record<Tab, string> = {
   dashboard: 'Overview',
   activity: 'Activity',
+  zones: 'Zones',
   graph: 'Graph',
   search: 'Search',
   units: 'Units',
@@ -88,6 +93,8 @@ export function App() {
   const [ws, setWs] = useState(api.getWorkspace());
   const [workspaces, setWorkspaces] = useState<Array<{ slug: string; name: string }>>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [activeZone, setActiveZone] = useState('');
 
   const searchQFromUrl = () => new URLSearchParams(window.location.search).get('q') || '';
 
@@ -142,6 +149,15 @@ export function App() {
     api.health().then(() => setOk(true)).catch(() => setOk(false));
     refreshMeta();
   }, []);
+
+  useEffect(() => {
+    api.zones()
+      .then((zs) => {
+        setZones(zs);
+        setActiveZone((cur) => (cur && zs.some((z) => z.id === cur) ? cur : ''));
+      })
+      .catch(() => setZones([]));
+  }, [ws]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -238,14 +254,28 @@ export function App() {
       </aside>
       <main className="main" id="main">
         <div className="wrap" key={ws}>
-          {tab === 'dashboard' && <Dashboard />}
+          {tab === 'dashboard' && (
+            <Dashboard zones={zones} activeZone={activeZone} onZoneChange={setActiveZone} />
+          )}
           {tab === 'activity' && <Activity onOpenUnit={(id) => go('units', id)} />}
+          {tab === 'zones' && <Zones />}
           {tab === 'graph' && <GraphView onOpenUnit={(id) => go('units', id)} />}
-          {tab === 'search' && <Search key={searchQuery} initialQuery={searchQuery} />}
+          {tab === 'search' && (
+            <Search
+              key={searchQuery}
+              initialQuery={searchQuery}
+              zones={zones}
+              zone={activeZone}
+              onZoneChange={setActiveZone}
+            />
+          )}
           {tab === 'units' && (
             <Units
               unitId={route.unitId ?? null}
               onSelectUnit={(id) => go('units', id || undefined)}
+              zones={zones}
+              zone={activeZone}
+              onZoneChange={setActiveZone}
             />
           )}
           {tab === 'traces' && <Traces />}

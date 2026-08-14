@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { migrate, configureSqliteConnection, ensureSqliteHealthy } from './schema.js';
+import { seedDefaultZones } from './seedZones.js';
 import type { Database as SqliteDatabase } from 'better-sqlite3';
 import type {
   ActivityEvent,
@@ -14,6 +15,8 @@ import type {
   IsoDate,
   Job,
   Link,
+  OcrSettings,
+  OcrSettingsInput,
   Persona,
   PipelineStage,
   Scenario,
@@ -32,8 +35,11 @@ import type {
   UnitType,
   Version,
   VersionId,
+  Zone,
+  ZoneMember,
+  NewZone,
 } from '@amem/core';
-import { DEFAULT_WORKSPACE_ID, requireRequestContext } from '@amem/core';
+import { currentZoneIds, DEFAULT_WORKSPACE_ID, requireRequestContext } from '@amem/core';
 import { decryptProviderKey, encryptProviderKey } from './providerCrypto.js';
 
 function currentWorkspaceId(): string {
@@ -44,17 +50,57 @@ function currentWorkspaceId(): string {
   }
 }
 
+/** Zone scoping for units rows: binds `zone_ids` and returns an SQL fragment,
+ *  or '' when the caller is not zone-scoped (legacy: workspace-wide access). */
+function currentZoneSql(params: Record<string, unknown>): string {
+  const zoneIds = currentZoneIds();
+  if (!zoneIds || zoneIds.length === 0) return '';
+  params.zone_ids = JSON.stringify(zoneIds);
+  return 'zone_id IN (SELECT value FROM json_each(@zone_ids))';
+}
+
+// Positional-parameter variants for queries built with `?` placeholders.
+function currentZoneSqlPositional(params: unknown[]): string {
+  const zoneIds = currentZoneIds();
+  if (!zoneIds || zoneIds.length === 0) return '';
+  params.push(JSON.stringify(zoneIds));
+  return 'zone_id IN (SELECT value FROM json_each(?))';
+}
+
+function currentLinkZoneSqlPositional(params: unknown[]): string {
+  const zoneIds = currentZoneIds();
+  if (!zoneIds || zoneIds.length === 0) return '';
+  params.push(JSON.stringify(zoneIds), JSON.stringify(zoneIds));
+  return `(source_unit_id IN (
+      SELECT id FROM units WHERE workspace_id = links.workspace_id
+      AND zone_id IN (SELECT value FROM json_each(?)))
+    OR target_unit_id IN (
+      SELECT id FROM units WHERE workspace_id = links.workspace_id
+      AND zone_id IN (SELECT value FROM json_each(?))))`;
+}
+
+function currentRefZoneSqlPositional(params: unknown[], table: string): string {
+  const zoneIds = currentZoneIds();
+  if (!zoneIds || zoneIds.length === 0) return '';
+  params.push(JSON.stringify(zoneIds));
+  return `EXISTS (
+    SELECT 1 FROM json_each(${table}.source_unit_ids) ju
+    JOIN units u ON u.id = ju.value
+    WHERE u.workspace_id = ${table}.workspace_id
+      AND u.zone_id IN (SELECT value FROM json_each(?)))`;
+}
+
 // --- SQL statement strings -------------------------------------------------
 
 const INSERT_UNIT = `
   INSERT INTO units (
     id, type, form, title, summary, body, status, quality, confidence,
-    embedding, created_at, updated_at, valid_from, valid_to, source_count,
-    importance, decay, version, labels, tags
+    embedding, created_at, updated_at, created_by_user_id, valid_from, valid_to, source_count,
+    importance, decay, version, labels, tags, zone_id
   ) VALUES (
     @id, @type, @form, @title, @summary, @body, @status, @quality, @confidence,
-    @embedding, @created_at, @updated_at, @valid_from, @valid_to, @source_count,
-    @importance, @decay, @version, @labels, @tags
+    @embedding, @created_at, @updated_at, @created_by_user_id, @valid_from, @valid_to, @source_count,
+    @importance, @decay, @version, @labels, @tags, @zone_id
   )
 `;
 
@@ -64,7 +110,7 @@ const UPDATE_UNIT = `
     body = @body, status = @status, quality = @quality, confidence = @confidence,
     embedding = @embedding, updated_at = @updated_at, valid_from = @valid_from,
     valid_to = @valid_to, source_count = @source_count, importance = @importance,
-    decay = @decay, version = @version, labels = @labels, tags = @tags
+    decay = @decay, version = @version, labels = @labels, tags = @tags, zone_id = @zone_id
   WHERE id = @id
 `;
 
@@ -75,6 +121,22 @@ const UPDATE_UNIT_LIGHT = `
   UPDATE units SET
     form = @form, status = @status, importance = @importance, decay = @decay
   WHERE id = @id
+`;
+
+/** Embedding-only update so re-embed jobs never touch curated fields. */
+const UPDATE_UNIT_EMBEDDING = `
+  UPDATE units SET embedding = @embedding, updated_at = @updated_at
+  WHERE id = @id
+`;
+
+const INSERT_ZONE = `
+  INSERT INTO zones (
+    id, workspace_id, slug, name, kind, owner_user_id, visibility, description,
+    embedding_centroid, auto, status, created_at, updated_at
+  ) VALUES (
+    @id, @workspace_id, @slug, @name, @kind, @owner_user_id, @visibility, @description,
+    @embedding_centroid, @auto, @status, @created_at, @updated_at
+  )
 `;
 
 // --- Row shapes --------------------------------------------------------------
@@ -90,8 +152,11 @@ interface UnitRow {
   quality: number;
   confidence: number;
   embedding: string | Buffer | null;
+  zone_id: string;
+  workspace_id: string;
   created_at: string;
   updated_at: string;
+  created_by_user_id: string | null;
   valid_from: string | null;
   valid_to: string | null;
   source_count: number;
@@ -102,8 +167,31 @@ interface UnitRow {
   tags: string;
 }
 
+interface ZoneRow {
+  id: string;
+  workspace_id: string;
+  slug: string;
+  name: string;
+  kind: Zone['kind'];
+  owner_user_id: string | null;
+  visibility: Zone['visibility'];
+  description: string | null;
+  embedding_centroid: string | null;
+  auto: number;
+  status: Zone['status'];
+  created_at: string;
+  updated_at: string;
+}
+
+interface ZoneMemberRow {
+  zone_id: string;
+  user_id: string;
+  role: ZoneMember['role'];
+  created_at: string;
+}
+
 const LIGHT_UNIT_COLUMNS = `id, type, form, title, summary, body, status, quality, confidence,
-  created_at, updated_at, valid_from, valid_to, source_count, importance, decay, version, labels, tags`;
+  created_at, updated_at, created_by_user_id, zone_id, valid_from, valid_to, source_count, importance, decay, version, labels, tags`;
 
 /** Compact binary embedding: raw Float32 values. ~4x smaller and much faster to
  *  parse than the legacy JSON text format (no array allocation per number). */
@@ -191,6 +279,15 @@ interface ProviderRow {
   updated_at: string;
 }
 
+interface OcrSettingsRow {
+  id: number;
+  base_url: string;
+  model: string;
+  api_key: string;
+  min_chars: number;
+  updated_at: string;
+}
+
 interface ScenarioRow {
   id: string;
   workspace_id: string;
@@ -262,12 +359,15 @@ function unitToRow(unit: Unit): UnitRow {
     embedding: unit.embedding ? encodeEmbedding(unit.embedding) : null,
     created_at: unit.createdAt,
     updated_at: unit.updatedAt,
+    created_by_user_id: unit.createdByUserId ?? null,
     valid_from: unit.validFrom ?? null,
     valid_to: unit.validTo ?? null,
     source_count: unit.sourceCount,
     importance: unit.importance,
     decay: unit.decay,
     version: unit.version,
+    zone_id: unit.zoneId ?? 'z_inbox',
+    workspace_id: unit.workspaceId ?? currentWorkspaceId(),
     labels: JSON.stringify(unit.labels),
     tags: JSON.stringify(unit.tags),
   };
@@ -287,12 +387,15 @@ function rowToUnit(row: UnitRow): Unit {
     embedding: row.embedding ? decodeEmbedding(row.embedding) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    createdByUserId: row.created_by_user_id ?? undefined,
+    workspaceId: row.workspace_id,
     validFrom: row.valid_from ?? undefined,
     validTo: row.valid_to ?? undefined,
     sourceCount: row.source_count,
     importance: row.importance,
     decay: row.decay,
     version: row.version,
+    zoneId: row.zone_id,
     labels: JSON.parse(row.labels),
     tags: JSON.parse(row.tags),
   };
@@ -306,10 +409,57 @@ function toSummary(unit: Unit): UnitSummary {
     title: unit.title,
     summary: unit.summary,
     tags: unit.tags,
+    zoneId: unit.zoneId,
+    createdByUserId: unit.createdByUserId,
     importance: unit.importance,
     decay: unit.decay,
     status: unit.status,
     updatedAt: unit.updatedAt,
+  };
+}
+
+function rowToZone(row: ZoneRow): Zone {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    slug: row.slug,
+    name: row.name,
+    kind: row.kind,
+    ownerUserId: row.owner_user_id ?? undefined,
+    visibility: row.visibility,
+    description: row.description ?? undefined,
+    embeddingCentroid: row.embedding_centroid ?? undefined,
+    auto: row.auto === 1,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function zoneToRow(zone: Zone): ZoneRow {
+  return {
+    id: zone.id,
+    workspace_id: zone.workspaceId,
+    slug: zone.slug,
+    name: zone.name,
+    kind: zone.kind,
+    owner_user_id: zone.ownerUserId ?? null,
+    visibility: zone.visibility,
+    description: zone.description ?? null,
+    embedding_centroid: zone.embeddingCentroid ?? null,
+    auto: zone.auto ? 1 : 0,
+    status: zone.status,
+    created_at: zone.createdAt,
+    updated_at: zone.updatedAt,
+  };
+}
+
+function rowToZoneMember(row: ZoneMemberRow): ZoneMember {
+  return {
+    zoneId: row.zone_id,
+    userId: row.user_id,
+    role: row.role,
+    createdAt: row.created_at,
   };
 }
 
@@ -586,23 +736,89 @@ export class SqliteStorage implements Storage {
     })();
   }
 
+  // --- OCR settings (instance-global, encrypted key) ---
+
+  private rowToOcrSettings(row: OcrSettingsRow): OcrSettings {
+    return {
+      baseUrl: row.base_url,
+      model: row.model,
+      apiKey: decryptProviderKey(row.api_key, this.secret) || undefined,
+      minChars: row.min_chars,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async getOcrSettings(): Promise<OcrSettings | null> {
+    const row = this.db.prepare('SELECT * FROM ocr_settings WHERE id = 1').get() as
+      | OcrSettingsRow
+      | undefined;
+    return row ? this.rowToOcrSettings(row) : null;
+  }
+
+  async upsertOcrSettings(settings: OcrSettingsInput): Promise<OcrSettings> {
+    const existing = this.db.prepare('SELECT * FROM ocr_settings WHERE id = 1').get() as
+      | OcrSettingsRow
+      | undefined;
+    const now = new Date().toISOString();
+    const storedKey = settings.apiKey
+      ? encryptProviderKey(settings.apiKey, this.secret)
+      : existing?.api_key ?? '';
+    const minChars =
+      settings.minChars !== undefined && Number.isFinite(settings.minChars)
+        ? Math.max(0, Math.round(settings.minChars))
+        : existing?.min_chars ?? 60;
+    this.db
+      .prepare(
+        `INSERT INTO ocr_settings (id, base_url, model, api_key, min_chars, updated_at)
+         VALUES (1, @baseUrl, @model, @apiKey, @minChars, @updatedAt)
+         ON CONFLICT (id) DO UPDATE SET
+           base_url = excluded.base_url,
+           model = excluded.model,
+           api_key = excluded.api_key,
+           min_chars = excluded.min_chars,
+           updated_at = excluded.updated_at`,
+      )
+      .run({
+        baseUrl: settings.baseUrl.replace(/\/+$/, ''),
+        model: settings.model,
+        apiKey: storedKey,
+        minChars,
+        updatedAt: now,
+      });
+    return this.rowToOcrSettings(
+      this.db.prepare('SELECT * FROM ocr_settings WHERE id = 1').get() as OcrSettingsRow,
+    );
+  }
+
+  async deleteOcrSettings(): Promise<void> {
+    this.db.prepare('DELETE FROM ocr_settings WHERE id = 1').run();
+  }
+
   // --- Units ---
 
   async createUnit(unit: Unit): Promise<void> {
     const row = unitToRow(unit) as unknown as Record<string, unknown>;
     row.workspace_id = currentWorkspaceId();
+    // Route units without an explicit zone to the workspace inbox (never the
+    // bare literal default, which is only a migration placeholder).
+    if (!unit.zoneId || unit.zoneId === 'z_inbox') {
+      const inbox = this.db
+        .prepare(`SELECT id FROM zones WHERE workspace_id = ? AND kind = 'inbox' LIMIT 1`)
+        .get(row.workspace_id) as { id: string } | undefined;
+      if (inbox) row.zone_id = inbox.id;
+    }
     // INSERT may not include workspace_id column yet in SQL string — use extended insert when available.
     try {
       this.db
         .prepare(
           `INSERT INTO units (
             id, type, form, title, summary, body, status, quality, confidence,
-            embedding, created_at, updated_at, valid_from, valid_to, source_count,
-            importance, decay, version, labels, tags, workspace_id
+            embedding, created_at, updated_at, created_by_user_id, valid_from, valid_to, source_count,
+            importance, decay, version, labels, tags, workspace_id, zone_id
           ) VALUES (
             @id, @type, @form, @title, @summary, @body, @status, @quality, @confidence,
-            @embedding, @created_at, @updated_at, @valid_from, @valid_to, @source_count,
-            @importance, @decay, @version, @labels, @tags, @workspace_id
+            @embedding, @created_at, @updated_at, @created_by_user_id, @valid_from, @valid_to, @source_count,
+            @importance, @decay, @version, @labels, @tags, @workspace_id, @zone_id
           )`,
         )
         .run(row);
@@ -613,17 +829,36 @@ export class SqliteStorage implements Storage {
 
   async getUnit(id: UnitId): Promise<Unit | null> {
     const ws = currentWorkspaceId();
+    const params: unknown[] = [id, ws];
+    let sql = 'SELECT * FROM units WHERE id = ? AND workspace_id = ?';
+    const zoneSql = currentZoneSqlPositional(params);
+    if (zoneSql) sql += ` AND ${zoneSql}`;
     const row = this.db
-      .prepare('SELECT * FROM units WHERE id = ? AND workspace_id = ?')
-      .get(id, ws) as UnitRow | undefined;
+      .prepare(sql)
+      .get(...params) as UnitRow | undefined;
     return row ? rowToUnit(row) : null;
   }
 
   async updateUnit(unit: Unit): Promise<void> {
+    this.assertUnitZoneAccessible(unit.id);
     this.db.prepare(UPDATE_UNIT).run(unitToRow(unit));
   }
 
+  async updateUnitEmbedding(
+    id: UnitId,
+    embedding: Unit['embedding'],
+    updatedAt?: string,
+  ): Promise<void> {
+    this.assertUnitZoneAccessible(id);
+    this.db.prepare(UPDATE_UNIT_EMBEDDING).run({
+      id,
+      embedding: embedding ? encodeEmbedding(embedding) : null,
+      updated_at: updatedAt ?? new Date().toISOString(),
+    });
+  }
+
   async deleteUnit(id: UnitId): Promise<void> {
+    this.assertUnitZoneAccessible(id);
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM unit_sources WHERE unit_id = ?').run(id);
       this.db.prepare('DELETE FROM links WHERE source_unit_id = ? OR target_unit_id = ?').run(id, id);
@@ -655,6 +890,8 @@ export class SqliteStorage implements Storage {
       conds.push("EXISTS (SELECT 1 FROM json_each(units.tags) WHERE json_each.value = @tag)");
       params.tag = filter.tag;
     }
+    const zoneSql = currentZoneSql(params);
+    if (zoneSql) conds.push(zoneSql);
     conds.unshift('workspace_id = @workspace_id');
     params.workspace_id = currentWorkspaceId();
     let sql = 'SELECT * FROM units';
@@ -676,11 +913,16 @@ export class SqliteStorage implements Storage {
    *  `limit` is given, returns the freshest N units — link generation only
    *  needs a bounded candidate set, so callers avoid loading every vector. */
   async allUnitsWithEmbeddings(limit?: number): Promise<Unit[]> {
-    const sql =
-      limit && limit > 0
-        ? "SELECT * FROM units WHERE status != 'archived' AND workspace_id = ? ORDER BY updated_at DESC LIMIT ?"
-        : "SELECT * FROM units WHERE status != 'archived' AND workspace_id = ?";
-    const params = limit && limit > 0 ? [currentWorkspaceId(), limit] : [currentWorkspaceId()];
+    const params: unknown[] = [];
+    let sql = "SELECT * FROM units WHERE status != 'archived' AND workspace_id = ?";
+    params.push(currentWorkspaceId());
+    const zoneSql = currentZoneSqlPositional(params);
+    if (zoneSql) sql += ` AND ${zoneSql}`;
+    sql += ' ORDER BY updated_at DESC';
+    if (limit && limit > 0) {
+      sql += ' LIMIT ?';
+      params.push(limit);
+    }
     const rows = this.db.prepare(sql).all(params) as UnitRow[];
     return rows.map(rowToUnit);
   }
@@ -689,11 +931,15 @@ export class SqliteStorage implements Storage {
    *  Use for list/graph/stats paths that never touch vectors — avoids
    *  parsing megabytes of embedding data per request. */
   async allUnits(): Promise<Unit[]> {
+    const params: unknown[] = [currentWorkspaceId()];
+    let sql = `SELECT ${LIGHT_UNIT_COLUMNS} FROM units WHERE status != 'archived' AND workspace_id = ?`;
+    const zoneSql = currentZoneSqlPositional(params);
+    if (zoneSql) sql += ` AND ${zoneSql}`;
     const rows = this.db
       .prepare(
-        `SELECT ${LIGHT_UNIT_COLUMNS} FROM units WHERE status != 'archived' AND workspace_id = ?`,
+        sql,
       )
-      .all(currentWorkspaceId()) as Array<Omit<UnitRow, 'embedding'>>;
+      .all(...params) as Array<Omit<UnitRow, 'embedding'>>;
     return rows.map((r) => rowToUnit({ ...r, embedding: null }));
   }
 
@@ -712,6 +958,133 @@ export class SqliteStorage implements Storage {
         });
       }
     })(units);
+  }
+
+  // --- Zones ---
+
+  /** Synchronous zone listing (better-sqlite3 is sync). Used by request-context
+   *  scoping so the server can enterWith ALS without an async boundary. */
+  listZonesSync(): Zone[] {
+    const rows = this.db
+      .prepare('SELECT * FROM zones WHERE workspace_id = ? ORDER BY kind, name')
+      .all(currentWorkspaceId()) as ZoneRow[];
+    return rows.map(rowToZone);
+  }
+
+  async listZones(): Promise<Zone[]> {
+    return this.listZonesSync();
+  }
+
+  async getZone(id: string): Promise<Zone | null> {
+    const row = this.db
+      .prepare('SELECT * FROM zones WHERE id = ? AND workspace_id = ?')
+      .get(id, currentWorkspaceId()) as ZoneRow | undefined;
+    return row ? rowToZone(row) : null;
+  }
+
+  async createZone(zone: NewZone): Promise<Zone> {
+    const now = new Date().toISOString();
+    const row: ZoneRow = {
+      id: `z_${randomUUID()}`,
+      workspace_id: currentWorkspaceId(),
+      slug: zone.slug,
+      name: zone.name,
+      kind: zone.kind,
+      owner_user_id: zone.ownerUserId ?? null,
+      visibility: zone.visibility ?? 'private',
+      description: zone.description ?? null,
+      embedding_centroid: zone.embeddingCentroid ?? null,
+      auto: zone.auto ? 1 : 0,
+      status: 'active',
+      created_at: now,
+      updated_at: now,
+    };
+    this.db.prepare(INSERT_ZONE).run(row);
+    return rowToZone(row);
+  }
+
+  async updateZone(zone: Zone): Promise<void> {
+    const res = this.db
+      .prepare(
+        `UPDATE zones SET
+           slug = @slug, name = @name, kind = @kind, owner_user_id = @owner_user_id,
+           visibility = @visibility, description = @description,
+           embedding_centroid = @embedding_centroid, auto = @auto, status = @status,
+           updated_at = @updated_at
+         WHERE id = @id AND workspace_id = @workspace_id`,
+      )
+      .run(zoneToRow(zone));
+    if (res.changes === 0) {
+      throw new Error(`zone ${zone.id} not found in workspace ${currentWorkspaceId()}`);
+    }
+  }
+
+  async deleteZone(id: string): Promise<void> {
+    const ws = currentWorkspaceId();
+    const inbox = this.db
+      .prepare(`SELECT id FROM zones WHERE workspace_id = ? AND kind = 'inbox' LIMIT 1`)
+      .get(ws) as { id: string } | undefined;
+    this.db.transaction(() => {
+      this.db.prepare('UPDATE units SET zone_id = ? WHERE zone_id = ? AND workspace_id = ?').run(
+        inbox?.id ?? 'z_inbox',
+        id,
+        ws,
+      );
+      this.db.prepare('DELETE FROM zone_members WHERE zone_id = ?').run(id);
+      this.db.prepare('DELETE FROM zones WHERE id = ? AND workspace_id = ?').run(id, ws);
+    })();
+  }
+
+  /** Synchronous zone-member lookup; see {@link listZonesSync}. */
+  listZoneMembersSync(zoneId: string): ZoneMember[] {
+    const rows = this.db
+      .prepare(
+        `SELECT m.zone_id, m.user_id, m.role, m.created_at
+         FROM zone_members m
+         JOIN zones z ON z.id = m.zone_id
+         WHERE m.zone_id = ? AND z.workspace_id = ?`,
+      )
+      .all(zoneId, currentWorkspaceId()) as ZoneMemberRow[];
+    return rows.map(rowToZoneMember);
+  }
+
+  async listZoneMembers(zoneId: string): Promise<ZoneMember[]> {
+    return this.listZoneMembersSync(zoneId);
+  }
+
+  async addZoneMember(zoneId: string, userId: string, role: ZoneMember['role']): Promise<void> {
+    this.db
+      .prepare('INSERT OR IGNORE INTO zone_members (zone_id, user_id, role, created_at) VALUES (?, ?, ?, ?)')
+      .run(zoneId, userId, role, new Date().toISOString());
+  }
+
+  async removeZoneMember(zoneId: string, userId: string): Promise<void> {
+    this.db.prepare('DELETE FROM zone_members WHERE zone_id = ? AND user_id = ?').run(zoneId, userId);
+  }
+
+  async moveUnitZone(unitId: UnitId, zoneId: string): Promise<void> {
+    const ws = currentWorkspaceId();
+    const zone = this.db.prepare('SELECT id FROM zones WHERE id = ? AND workspace_id = ?').get(zoneId, ws);
+    if (!zone) throw new Error(`zone ${zoneId} not found in workspace ${ws}`);
+    const zoneIds = currentZoneIds();
+    if (zoneIds && zoneIds.length > 0 && !zoneIds.includes(zoneId)) {
+      throw new Error(`zone ${zoneId} not accessible in this zone scope`);
+    }
+    this.assertUnitZoneAccessible(unitId);
+    this.db.prepare('UPDATE units SET zone_id = ? WHERE id = ? AND workspace_id = ?').run(zoneId, unitId, ws);
+  }
+
+  /** Reject writes to units outside the caller's accessible zones (when the
+   *  caller is zone-scoped). Legacy contexts (no zoneIds) are unaffected. */
+  private assertUnitZoneAccessible(unitId: string): void {
+    const zoneIds = currentZoneIds();
+    if (!zoneIds || zoneIds.length === 0) return;
+    const row = this.db
+      .prepare('SELECT zone_id FROM units WHERE id = ? AND workspace_id = ?')
+      .get(unitId, currentWorkspaceId()) as { zone_id: string } | undefined;
+    if (row && !zoneIds.includes(row.zone_id)) {
+      throw new Error(`unit ${unitId} is not accessible in this zone scope`);
+    }
   }
 
   // --- Links ---
@@ -755,18 +1128,25 @@ export class SqliteStorage implements Storage {
   }
 
   async getLinksForUnit(unitId: UnitId): Promise<Link[]> {
+    const params: unknown[] = [currentWorkspaceId(), unitId, unitId];
+    let sql = 'SELECT * FROM links WHERE workspace_id = ? AND (source_unit_id = ? OR target_unit_id = ?)';
+    const zoneSql = currentLinkZoneSqlPositional(params);
+    if (zoneSql) sql += ` AND ${zoneSql}`;
+    sql += ' ORDER BY created_at DESC';
     const rows = this.db
-      .prepare(
-        `SELECT * FROM links WHERE workspace_id = ? AND (source_unit_id = ? OR target_unit_id = ?) ORDER BY created_at DESC`,
-      )
-      .all(currentWorkspaceId(), unitId, unitId) as LinkRow[];
+      .prepare(sql)
+      .all(...params) as LinkRow[];
     return rows.map(rowToLink);
   }
 
   async allLinks(): Promise<Link[]> {
+    const params: unknown[] = [currentWorkspaceId()];
+    let sql = 'SELECT * FROM links WHERE workspace_id = ?';
+    const zoneSql = currentLinkZoneSqlPositional(params);
+    if (zoneSql) sql += ` AND ${zoneSql}`;
     const rows = this.db
-      .prepare('SELECT * FROM links WHERE workspace_id = ?')
-      .all(currentWorkspaceId()) as LinkRow[];
+      .prepare(sql)
+      .all(...params) as LinkRow[];
     return rows.map(rowToLink);
   }
 
@@ -825,6 +1205,20 @@ export class SqliteStorage implements Storage {
     }
     const rows = this.db.prepare(sql).all(params) as TraceRow[];
     return rows.map(rowToTrace);
+  }
+
+  async deleteTraces(filter: { ids?: string[]; before?: string; all?: boolean } = {}): Promise<number> {
+    if (filter.ids && filter.ids.length > 0) {
+      const placeholders = filter.ids.map(() => '?').join(',');
+      return this.db.prepare(`DELETE FROM traces WHERE id IN (${placeholders})`).run(...filter.ids).changes;
+    }
+    if (filter.before) {
+      return this.db.prepare('DELETE FROM traces WHERE created_at < ?').run(filter.before).changes;
+    }
+    if (filter.all) {
+      return this.db.prepare('DELETE FROM traces').run().changes;
+    }
+    return 0;
   }
 
   async upsertSession(session: { id: SessionId; label: string; agent?: string }): Promise<void> {
@@ -976,6 +1370,8 @@ export class SqliteStorage implements Storage {
     const ws = currentWorkspaceId();
     const conds = ['workspace_id = ?'];
     const params: unknown[] = [ws];
+    const zoneSql = currentRefZoneSqlPositional(params, 'scenarios');
+    if (zoneSql) conds.push(zoneSql);
     if (filter.status) {
       conds.push('status = ?');
       params.push(filter.status);
@@ -995,9 +1391,13 @@ export class SqliteStorage implements Storage {
   }
 
   async getScenario(id: ScenarioId): Promise<Scenario | null> {
+    const params: unknown[] = [id, currentWorkspaceId()];
+    let sql = 'SELECT * FROM scenarios WHERE id = ? AND workspace_id = ?';
+    const zoneSql = currentRefZoneSqlPositional(params, 'scenarios');
+    if (zoneSql) sql += ` AND ${zoneSql}`;
     const row = this.db
-      .prepare('SELECT * FROM scenarios WHERE id = ? AND workspace_id = ?')
-      .get(id, currentWorkspaceId()) as ScenarioRow | undefined;
+      .prepare(sql)
+      .get(...params) as ScenarioRow | undefined;
     return row ? rowToScenario(row) : null;
   }
 
@@ -1077,6 +1477,8 @@ export class SqliteStorage implements Storage {
     const ws = currentWorkspaceId();
     const conds = ['workspace_id = ?'];
     const params: unknown[] = [ws];
+    const zoneSql = currentRefZoneSqlPositional(params, 'assets');
+    if (zoneSql) conds.push(zoneSql);
     if (filter.kind) {
       conds.push('kind = ?');
       params.push(filter.kind);
@@ -1102,23 +1504,29 @@ export class SqliteStorage implements Storage {
   async listEquipped(agent: string): Promise<Asset[]> {
     const ws = currentWorkspaceId();
     const agentKey = `%"${agent.replaceAll('"', '')}"%`;
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM assets
+    const params: unknown[] = [ws, agentKey];
+    let sql = `SELECT * FROM assets
          WHERE workspace_id = ?
            AND status = 'published'
            AND (visibility IN ('public', 'workspace')
-                OR bound_agents LIKE ?)
-         ORDER BY updated_at DESC`,
-      )
-      .all(ws, agentKey) as AssetRow[];
+                OR bound_agents LIKE ?)`;
+    const zoneSql = currentRefZoneSqlPositional(params, 'assets');
+    if (zoneSql) sql += ` AND ${zoneSql}`;
+    sql += ' ORDER BY updated_at DESC';
+    const rows = this.db
+      .prepare(sql)
+      .all(...params) as AssetRow[];
     return rows.map(rowToAsset);
   }
 
   async getAsset(id: AssetId): Promise<Asset | null> {
+    const params: unknown[] = [id, currentWorkspaceId()];
+    let sql = 'SELECT * FROM assets WHERE id = ? AND workspace_id = ?';
+    const zoneSql = currentRefZoneSqlPositional(params, 'assets');
+    if (zoneSql) sql += ` AND ${zoneSql}`;
     const row = this.db
-      .prepare('SELECT * FROM assets WHERE id = ? AND workspace_id = ?')
-      .get(id, currentWorkspaceId()) as AssetRow | undefined;
+      .prepare(sql)
+      .get(...params) as AssetRow | undefined;
     return row ? rowToAsset(row) : null;
   }
 
@@ -1198,35 +1606,67 @@ export class SqliteStorage implements Storage {
 
   async counts(): Promise<StatsCounts> {
     const ws = currentWorkspaceId();
-    const units = await this.scalarCount('SELECT COUNT(*) AS c FROM units WHERE workspace_id = ?', ws);
-    const unitsActive = await this.scalarCount(
+    const units = await this.zoneCountsSql(ws, 'SELECT COUNT(*) AS c FROM units WHERE workspace_id = ?', {
+      activeOnly: false,
+    });
+    const unitsActive = await this.zoneCountsSql(
+      ws,
       "SELECT COUNT(*) AS c FROM units WHERE status != 'archived' AND workspace_id = ?",
-      ws,
+      { activeOnly: false },
     );
-    const crystals = await this.scalarCount(
-      "SELECT COUNT(*) AS c FROM units WHERE form = 'crystal' AND workspace_id = ?",
+    const crystals = await this.zoneCountsSql(
       ws,
+      "SELECT COUNT(*) AS c FROM units WHERE form = 'crystal' AND workspace_id = ?",
+      { activeOnly: false },
     );
     const traces = await this.scalarCount('SELECT COUNT(*) AS c FROM traces WHERE workspace_id = ?', ws);
-    const links = await this.scalarCount('SELECT COUNT(*) AS c FROM links WHERE workspace_id = ?', ws);
+    const links = await this.zoneCountsSql(ws, 'SELECT COUNT(*) AS c FROM links WHERE workspace_id = ?', {
+      links: true,
+    });
     const sources = await this.scalarCount('SELECT COUNT(*) AS c FROM sources WHERE workspace_id = ?', ws);
     const sessions = await this.scalarCount('SELECT COUNT(*) AS c FROM sessions WHERE workspace_id = ?', ws);
-    const pendingReview = await this.scalarCount(
+    const pendingReview = await this.zoneCountsSql(
+      ws,
       "SELECT COUNT(*) AS c FROM units WHERE status = 'pending' AND workspace_id = ?",
-      ws,
+      { activeOnly: false },
     );
-    const scenarios = await this.scalarCount(
+    const scenarios = await this.zoneCountsSql(
+      ws,
       "SELECT COUNT(*) AS c FROM scenarios WHERE workspace_id = ? AND status != 'archived'",
-      ws,
+      { refs: 'scenarios' },
     );
-    const assets = await this.scalarCount('SELECT COUNT(*) AS c FROM assets WHERE workspace_id = ?', ws);
+    const assets = await this.zoneCountsSql(ws, 'SELECT COUNT(*) AS c FROM assets WHERE workspace_id = ?', {
+      refs: 'assets',
+    });
     return { units, unitsActive, crystals, traces, links, sources, sessions, pendingReview, scenarios, assets };
   }
 
+  /** Zone-scoped scalar count. Options select which zone clause applies:
+   *  - default: units (zone_id column)
+   *  - `links`: links (endpoint-OR clause)
+   *  - `refs`: scenarios/assets (source_unit_ids EXISTS clause) */
+  private async zoneCountsSql(
+    ws: string,
+    base: string,
+    opts: { activeOnly?: boolean; links?: boolean; refs?: 'scenarios' | 'assets' } = {},
+  ): Promise<number> {
+    const params: unknown[] = [ws];
+    let clause = '';
+    if (opts.refs) clause = currentRefZoneSqlPositional(params, opts.refs);
+    else if (opts.links) clause = currentLinkZoneSqlPositional(params);
+    else clause = currentZoneSqlPositional(params);
+    return this.scalarCount(clause ? `${base} AND ${clause}` : base, ...params);
+  }
+
   async byTypeCounts(): Promise<Partial<Record<UnitType, number>>> {
+    const params: unknown[] = [currentWorkspaceId()];
+    let sql = 'SELECT type, COUNT(*) AS c FROM units WHERE workspace_id = ?';
+    const zoneSql = currentZoneSqlPositional(params);
+    if (zoneSql) sql += ` AND ${zoneSql}`;
+    sql += ' GROUP BY type';
     const rows = this.db
-      .prepare('SELECT type, COUNT(*) AS c FROM units WHERE workspace_id = ? GROUP BY type')
-      .all(currentWorkspaceId()) as Array<{
+      .prepare(sql)
+      .all(...params) as Array<{
       type: UnitType;
       c: number;
     }>;
@@ -1237,18 +1677,33 @@ export class SqliteStorage implements Storage {
 
   async perDay(limit?: number): Promise<Array<{ day: string; units: number; traces: number }>> {
     const ws = currentWorkspaceId();
+    const params: unknown[] = [ws];
+    let unitsClause = '';
+    const z = currentZoneSqlPositional(params);
+    if (z) unitsClause = ` AND ${z}`;
+    params.push(ws);
     const base = `
       SELECT day, SUM(c_units) AS units, SUM(c_traces) AS traces FROM (
-        SELECT date(created_at) AS day, 1 AS c_units, 0 AS c_traces FROM units WHERE workspace_id = ?
+        SELECT date(created_at) AS day, 1 AS c_units, 0 AS c_traces FROM units WHERE workspace_id = ?${unitsClause}
         UNION ALL
         SELECT date(created_at) AS day, 0 AS c_units, 1 AS c_traces FROM traces WHERE workspace_id = ?
       ) GROUP BY day ORDER BY day DESC
     `;
-    const rows = (
-      limit && limit > 0
-        ? this.db.prepare(`${base} LIMIT ?`).all(ws, ws, limit)
-        : this.db.prepare(base).all(ws, ws)
-    ) as Array<{ day: string; units: number; traces: number }>;
+    let rows: Array<{ day: string; units: number; traces: number }>;
+    if (limit && limit > 0) {
+      params.push(limit);
+      rows = this.db.prepare(`${base} LIMIT ?`).all(...params) as Array<{
+        day: string;
+        units: number;
+        traces: number;
+      }>;
+    } else {
+      rows = this.db.prepare(base).all(...params) as Array<{
+        day: string;
+        units: number;
+        traces: number;
+      }>;
+    }
     return rows.map((r) => ({ day: r.day, units: r.units, traces: r.traces }));
   }
 
@@ -1481,15 +1936,19 @@ interface JobRow {
 }
 
 /** Wrap an already-open, migrated database in a `Storage` implementation. */
-export function createSqliteStorage(db: SqliteDatabase, secret?: string): Storage {
+export function createSqliteStorage(db: SqliteDatabase, secret?: string): SqliteStorage {
   return new SqliteStorage(db, secret);
 }
 
 /** Open (creating/migrating if needed) a database at `dbPath` and wrap it. */
-export function createSqliteStorageFromPath(dbPath: string, secret?: string): Promise<Storage> {
+export function createSqliteStorageFromPath(
+  dbPath: string,
+  secret?: string,
+): Promise<SqliteStorage> {
   const db = new Database(dbPath);
   configureSqliteConnection(db);
   migrate(db);
+  seedDefaultZones(db);
   const health = ensureSqliteHealthy(db);
   if (health !== 'ok' && health !== 'ok-after-fts-rebuild') {
     console.warn(`[amem/db] sqlite integrity warning: ${health}`);

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, type Me } from '../api';
 import { PageHead } from '../components/PageHead';
-import type { AiProvider, AiStatus } from '../types';
+import type { AiProvider, AiStatus, OcrSettings } from '../types';
 
 const PROVIDER_PRESETS: Array<{ name: string; baseUrl: string; model: string; note?: string }> = [
   { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
@@ -66,6 +66,12 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
   const [provApiKey, setProvApiKey] = useState('');
   const [provTest, setProvTest] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
   const [preset, setPreset] = useState('');
+  const [ocrSettings, setOcrSettings] = useState<OcrSettings | null>(null);
+  const [ocrBaseUrl, setOcrBaseUrl] = useState('');
+  const [ocrModel, setOcrModel] = useState('');
+  const [ocrApiKey, setOcrApiKey] = useState('');
+  const [ocrMinChars, setOcrMinChars] = useState('60');
+  const [ocrBusy, setOcrBusy] = useState(false);
 
   const load = async () => {
     try {
@@ -98,6 +104,15 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
         setAiStatus(await api.aiStatus());
       } catch {
         setAiStatus(null);
+      }
+      try {
+        const ocr = await api.ocrSettings();
+        setOcrSettings(ocr);
+        setOcrBaseUrl(ocr?.baseUrl ?? '');
+        setOcrModel(ocr?.model ?? '');
+        setOcrMinChars(String(ocr?.minChars ?? 60));
+      } catch {
+        setOcrSettings(null);
       }
     } catch (e) {
       setError(String((e as Error).message || e));
@@ -237,6 +252,47 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
       });
     } catch (e) {
       setProvTest({ id, ok: false, msg: String((e as Error).message || e) });
+    }
+  };
+
+  const saveOcr = async () => {
+    setError('');
+    setInfo('');
+    setOcrBusy(true);
+    try {
+      await api.saveOcrSettings({
+        baseUrl: ocrBaseUrl,
+        model: ocrModel,
+        apiKey: ocrApiKey.trim() || undefined,
+        minChars: Number(ocrMinChars) || 60,
+      });
+      setOcrApiKey('');
+      setOcrSettings(await api.ocrSettings());
+      setAiStatus(await api.aiStatus());
+      setInfo('OCR settings saved.');
+    } catch (e) {
+      setError(String((e as Error).message || e));
+    } finally {
+      setOcrBusy(false);
+    }
+  };
+
+  const clearOcr = async () => {
+    setError('');
+    setInfo('');
+    setOcrBusy(true);
+    try {
+      await api.clearOcrSettings();
+      setOcrSettings(null);
+      setOcrBaseUrl('');
+      setOcrModel('');
+      setOcrMinChars('60');
+      setAiStatus(await api.aiStatus());
+      setInfo('OCR settings cleared.');
+    } catch (e) {
+      setError(String((e as Error).message || e));
+    } finally {
+      setOcrBusy(false);
     }
   };
 
@@ -494,12 +550,73 @@ export function Settings({ onAuthChange }: { onAuthChange?: () => void }) {
             embedding: {aiStatus ? aiStatus.embedding.mode : '…'}
             {aiStatus?.embedding.model ? ` · ${aiStatus.embedding.model}` : ''}
           </span>
+          <span className="badge">
+            OCR: {aiStatus?.ocr ? aiStatus.ocr.model : 'off (scanned PDFs skipped)'}
+          </span>
           {aiStatus?.active && <span className="badge">active: {aiStatus.active.name}</span>}
           {aiStatus?.env && (
             <span className="badge">
               env: {aiStatus.env.model} @ {aiStatus.env.baseUrl}
             </span>
           )}
+        </div>
+        {aiStatus && !aiStatus.ocr && (
+          <p className="muted" style={{ marginTop: 8 }}>
+            OCR needs a vision-capable OpenAI-compatible endpoint (the active LLM provider may not
+            support images). Configure one below, or set <code>AMEM_OCR_*</code> env vars (DB
+            settings take priority).
+          </p>
+        )}
+
+        <h4 style={{ marginTop: 16 }}>OCR endpoint (scanned PDFs)</h4>
+        <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+          <div className="row" style={{ gap: 8 }}>
+            <input
+              style={{ flex: 1 }}
+              placeholder="base URL (e.g. https://api.siliconflow.cn/v1)"
+              value={ocrBaseUrl}
+              onChange={(e) => setOcrBaseUrl(e.target.value)}
+            />
+            <input
+              style={{ flex: 1 }}
+              placeholder="model (vision-capable, e.g. Qwen/Qwen2.5-VL-72B-Instruct)"
+              value={ocrModel}
+              onChange={(e) => setOcrModel(e.target.value)}
+            />
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <input
+              style={{ flex: 2 }}
+              type="password"
+              placeholder={ocrSettings?.hasKey ? `api key (current: ${ocrSettings.keyPrefix}) — leave blank to keep` : 'api key'}
+              value={ocrApiKey}
+              onChange={(e) => setOcrApiKey(e.target.value)}
+            />
+            <input
+              style={{ flex: 1 }}
+              type="number"
+              min={10}
+              max={1000}
+              placeholder="min chars (default 60)"
+              value={ocrMinChars}
+              onChange={(e) => setOcrMinChars(e.target.value)}
+            />
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <button onClick={saveOcr} disabled={ocrBusy}>
+              {ocrBusy ? 'Saving…' : ocrSettings ? 'Update OCR' : 'Save OCR'}
+            </button>
+            {ocrSettings && (
+              <button onClick={clearOcr} disabled={ocrBusy} className="danger">
+                Clear
+              </button>
+            )}
+            <span className="muted">
+              {ocrSettings
+                ? `configured: ${ocrSettings.model} @ ${ocrSettings.baseUrl}`
+                : 'not configured — scanned PDFs will be skipped'}
+            </span>
+          </div>
         </div>
 
         <h4 style={{ marginTop: 16 }}>Add / edit provider</h4>

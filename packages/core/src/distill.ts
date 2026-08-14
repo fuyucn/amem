@@ -4,6 +4,7 @@ import type { Embedder } from './embedder.js';
 import { LLM_EXTRACT_INTENT, type LlmClient } from './llm.js';
 import { findDuplicate, mergeUnits } from './dedup.js';
 import { countTokens } from './lib/tokenizer.js';
+import { EMBED_BODY_HEAD, hashUnitEmbed } from './lib/vector.js';
 
 export interface CandidateUnit {
   type: UnitType;
@@ -266,7 +267,21 @@ export async function distillUnits(
       importance: 0.5,
       quality: 0.8,
     };
-    const vector = await embed.embed(`${candidate.title} ${candidate.summary} ${candidate.body}`);
+    const vector =
+      embed.mode === 'offline'
+        ? hashUnitEmbed(
+            {
+              title: candidate.title,
+              summary: candidate.summary,
+              body: candidate.body,
+            },
+            await embed.dims(),
+          )
+        : await embed.embed(
+            [candidate.title, candidate.summary, candidate.body.slice(0, EMBED_BODY_HEAD)]
+              .filter(Boolean)
+              .join(' '),
+          );
     const dup = findDuplicate(
       { title: candidate.title, embedding: { dims: vector.length, values: vector } },
       existing,

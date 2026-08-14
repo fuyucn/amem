@@ -3,13 +3,18 @@ import type {
   ContextItem,
   RecallInput,
   RecallResult,
+  RoutedZone,
   Source,
   Unit,
   UnitType,
   UnitSummary,
+  Zone,
 } from './domain.js';
 import type { Storage } from './store.js';
 import type { Embedder } from './embedder.js';
+import type { RequestContext } from './requestContext.js';
+import { requireRequestContext, runWithRequestContextAsync } from './requestContext.js';
+import { accessibleZones, resolveExplicitZone } from './zones.js';
 import { isCodeSymbolUnit } from './classify.js';
 import { cosine } from './lib/vector.js';
 import { countTokens } from './lib/tokenizer.js';
@@ -32,6 +37,78 @@ interface Scored {
   unit: Unit;
   score: number;
   reason: string;
+}
+
+function zoneKeywordScore(query: string, zone: Zone): number {
+  const terms = queryTerms(query);
+  if (terms.length === 0) return 0;
+  // Identity match must be a whole token: "persona" is not "personal", and
+  // "user" in a slug is not a routing signal. Description overlap may stay
+  // substring-based (it only contributes the weaker half).
+  const identityTokens = new Set(
+    `${zone.name} ${zone.slug}`
+      .toLowerCase()
+      .split(/[^a-z0-9\u3400-\u9fff]+/)
+      .filter(Boolean),
+  );
+  const haystack = `${zone.name} ${zone.slug} ${zone.description ?? ''}`.toLowerCase();
+  let identityHit = 0;
+  let hits = 0;
+  for (const t of terms) {
+    if (identityTokens.has(t)) identityHit = 1;
+    if (haystack.includes(t)) hits++;
+  }
+  // A direct name/slug match gives a strong base even when the query has
+  // unrelated extra terms; description overlap adds the rest.
+  return identityHit * 0.5 + (hits / terms.length) * 0.5;
+}
+
+function parseCentroid(raw?: string): number[] | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return Array.isArray(value) && value.every((v) => typeof v === 'number') ? (value as number[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Auto-route a query to the best-matching accessible zone. Scoring combines
+ *  keyword overlap on the zone name/slug/description with embedding-centroid
+ *  similarity. Returns null when no zone clears the 0.35 threshold (caller
+ *  stays on the full accessible set). */
+export async function routeZone(
+  query: string,
+  ctx: RequestContext,
+  storage: Storage,
+  embed: Embedder,
+): Promise<RoutedZone | null> {
+  const accessible = await accessibleZones(storage, ctx);
+  if (accessible.length === 0) return null;
+  let queryVec: number[] | null = null;
+  if (embed.mode !== 'offline') {
+    try {
+      queryVec = await embed.embed(query);
+    } catch {
+      // centroid routing degrades to keyword-only when the provider fails
+    }
+  }
+  let best: { zone: Zone; score: number } | null = null;
+  for (const zone of accessible) {
+    let score = zoneKeywordScore(query, zone) * 0.8;
+    if (queryVec) {
+      const centroid = parseCentroid(zone.embeddingCentroid);
+      if (centroid) score += Math.max(0, cosine(queryVec, centroid)) * 0.4;
+    }
+    if (!best || score > best.score) best = { zone, score };
+  }
+  if (!best || best.score < 0.35) return null;
+  return {
+    id: best.zone.id,
+    slug: best.zone.slug,
+    name: best.zone.name,
+    reason: `auto-routed (${best.score.toFixed(2)})`,
+  };
 }
 
 function queryTerms(query: string): string[] {
@@ -76,17 +153,41 @@ function buildBlock(unit: UnitSummary, body: string | undefined, sources: Source
   return lines.join('\n');
 }
 
-/** Hybrid semantic + keyword + recency/decay/importance recall with token budgeting. */
-export async function recall(
+interface ZoneMeta {
+  byId: Map<string, Zone>;
+}
+
+async function zoneMeta(storage: Storage): Promise<ZoneMeta> {
+  const zones = await storage.listZones();
+  return { byId: new Map(zones.map((z) => [z.id, z])) };
+}
+
+function scopeUnits(units: Unit[], ctx: RequestContext, _meta: ZoneMeta): Unit[] {
+  if (!ctx.zoneIds || ctx.zoneIds.length === 0) return units;
+  const allowed = new Set(ctx.zoneIds);
+  return units.filter((u) => u.zoneId && allowed.has(u.zoneId));
+}
+
+function annotate(unit: UnitSummary, meta: ZoneMeta): UnitSummary {
+  if (!unit.zoneId) return unit;
+  const zone = meta.byId.get(unit.zoneId);
+  if (!zone) return unit;
+  return { ...unit, zoneSlug: zone.slug, zoneName: zone.name };
+}
+
+async function recallInner(
   storage: Storage,
   embed: Embedder,
   config: AmemConfig,
   input: RecallInput,
+  ctx: RequestContext,
+  routed: RoutedZone | undefined,
+  meta: ZoneMeta,
 ): Promise<RecallResult> {
   const budget = input.tokenBudget ?? config.thresholds.recallBudget;
   const topK = input.topK ?? 10;
   const queryVec = await embed.embed(input.query);
-  const all = await storage.allUnitsWithEmbeddings();
+  const all = scopeUnits(await storage.allUnitsWithEmbeddings(), ctx, meta);
 
   const scored: Scored[] = [];
   for (const unit of all) {
@@ -150,13 +251,79 @@ export async function recall(
     items.push({ unit: toUnitSummary(unit), score, reason, citations: sources });
   }
 
+  const annotated = items.map((item) => {
+    const zone = item.unit.zoneId ? meta.byId.get(item.unit.zoneId) : undefined;
+    return {
+      ...item,
+      unit: annotate(item.unit, meta),
+      zoneId: item.unit.zoneId,
+      zoneSlug: zone?.slug,
+      zoneName: zone?.name,
+    };
+  });
+
   return {
     query: input.query,
     budget,
     usedTokens: used,
-    items,
+    items: annotated,
     text: textParts.join('\n\n'),
     grounded,
     deduplicated,
+    routedZone: routed,
   };
+}
+
+/** Hybrid semantic + keyword + recency/decay/importance recall with token
+ *  budgeting and zone routing. */
+export async function recall(
+  storage: Storage,
+  embed: Embedder,
+  config: AmemConfig,
+  input: RecallInput,
+): Promise<RecallResult> {
+  const ctx = requireRequestContext();
+  const meta = await zoneMeta(storage);
+  const explicit = input.zone ? await resolveExplicitZone(input.zone, storage, ctx) : null;
+  if (explicit) {
+    return runWithRequestContextAsync({ ...ctx, zoneIds: [explicit.id] }, () =>
+      recallInner(storage, embed, config, input, { ...ctx, zoneIds: [explicit.id] }, explicit, meta),
+    );
+  }
+  // crossZone=true skips auto-routing and searches the full accessible zone
+  // set ("I don't care which partition it lives in"). Default keeps routing.
+  const routed = input.crossZone ? null : await routeZone(input.query, ctx, storage, embed);
+  if (routed) {
+    // Routing is a preference, not a hard filter. Keep the workspace inbox
+    // (uncategorized memory awaiting assignment) inside the candidate pool so
+    // newly ingested units stay recallable even when the query auto-routes to
+    // a specific partition. Other partitions remain strictly isolated.
+    const scopeIds = await routedScopeIds(routed, ctx, storage, meta);
+    const scoped = await runWithRequestContextAsync({ ...ctx, zoneIds: scopeIds }, () =>
+      recallInner(storage, embed, config, input, { ...ctx, zoneIds: scopeIds }, routed, meta),
+    );
+    // Routing is a preference, not a hard filter: when the best match inside
+    // the auto-routed zone is weak (e.g. "shared" matched as a routing hint
+    // but the real target lives in Inbox), fall back to all accessible zones.
+    if (scoped.items[0]?.score !== undefined && scoped.items[0].score >= 0.35) {
+      return scoped;
+    }
+    return recallInner(storage, embed, config, input, ctx, routed, meta);
+  }
+  return recallInner(storage, embed, config, input, ctx, undefined, meta);
+}
+
+/** Candidate zones for an auto-routed recall: the routed zone plus the
+ *  workspace inbox (unassigned memory must never be unreachable). */
+async function routedScopeIds(
+  routed: RoutedZone,
+  ctx: RequestContext,
+  storage: Storage,
+  _meta: ZoneMeta,
+): Promise<string[]> {
+  const ids = new Set<string>([routed.id]);
+  for (const zone of await accessibleZones(storage, ctx)) {
+    if (zone.kind === 'inbox') ids.add(zone.id);
+  }
+  return [...ids];
 }

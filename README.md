@@ -23,6 +23,7 @@ It is the open, self-hostable answer to `llm-wiki` / `obsidian-wiki` / vendor lo
 
 - **AI-first storage**: a knowledge **graph** (units = nodes, typed links = edges), not markdown files. Markdown is only an export format (OKF).
 - **Three memory forms**: Trace (raw) → Unit (atomic, 8 types) → Crystal (cross-validated).
+- **Zones (project partitions)**: knowledge is auto-routed into `inbox` / `shared` / `personal` / `project` zones under each workspace — organized by project and access-isolated per account (A never sees B's private zone; recall never crosses zones by default).
 - **Auto-organization**: distillation, dedup/merge, link (cross-reference) generation, contradiction detection, crystal promotion, decay/forgetting.
 - **Working memory**: a daily compact briefing of the most relevant knowledge (attention prefetch).
 - **MCP server**: read/write the graph from Codex, Claude Code, Cursor, and any MCP client.
@@ -45,6 +46,7 @@ The dashboard is a real URL-routed SPA (no hash routing) — every tab is a deep
 | `/traces` | raw ingestion traces |
 | `/working-memory` | daily working-memory briefing |
 | `/review` | curation review queue |
+| `/zones` | zone management (list, create, membership, auto-route) |
 | `/settings` | auth, workspaces, AI providers, PATs, agent (MCP) connection |
 
 Legacy `/#/graph`-style hash links are automatically redirected to the path routes. Server-side SPA fallback means any of these URLs can be opened, refreshed, or shared directly.

@@ -11,10 +11,14 @@ export interface Unit {
   id: string; type: UnitType; form: MemoryForm; title: string; summary: string; body: string;
   tags: string[]; labels: Record<string, string | number | boolean>; status: UnitStatus; quality: number; confidence: number;
   createdAt: string; updatedAt: string; sourceCount: number; importance: number; decay: number; version: number;
+  zoneId?: string; workspaceId?: string; createdByUserId?: string;
 }
 export interface UnitSummary {
   id: string; type: UnitType; form: MemoryForm; title: string; summary: string; tags: string[];
   category?: string;
+  zoneId?: string;
+  workspaceId?: string;
+  createdByUserId?: string;
   importance: number; decay: number; status: UnitStatus; updatedAt: string;
 }
 export interface UnitNode extends UnitSummary {
@@ -164,6 +168,7 @@ export interface ImportSourcesResult {
   files: number;
   sessions: number;
   tokensSavedByDedup: number;
+  ocrPages?: number;
 }
 
 export interface AiProvider {
@@ -188,6 +193,16 @@ export interface AiStatus {
   env: { baseUrl: string; model: string; hasKey: boolean } | null;
   mode: 'provider' | 'env' | 'mock';
   embedding: { mode: 'api' | 'offline'; model?: string };
+  ocr: { baseUrl: string; model: string; minChars?: number } | null;
+}
+
+export interface OcrSettings {
+  baseUrl: string;
+  model: string;
+  minChars: number;
+  updatedAt: string;
+  hasKey: boolean;
+  keyPrefix?: string;
 }
 
 export type ActivityKind =
@@ -237,4 +252,32 @@ export interface ActivitySummary {
     byTag: Array<{ key: string; count: number }>;
   };
   topActors: Array<{ actor: string; writes: number; reads: number }>;
+}
+
+export type ZoneKind = 'personal' | 'shared' | 'project' | 'inbox';
+export type ZoneVisibility = 'private' | 'workspace' | 'members';
+export type ZoneMemberRole = 'owner' | 'editor' | 'reader';
+
+export interface Zone {
+  id: string;
+  workspaceId: string;
+  slug: string;
+  name: string;
+  kind: ZoneKind;
+  ownerUserId?: string;
+  visibility: ZoneVisibility;
+  description?: string;
+  auto: boolean;
+  status: 'active' | 'archived';
+  createdAt: string;
+  updatedAt: string;
+  memberCount: number;
+  unitCount: number;
+}
+
+export interface ZoneMember {
+  zoneId: string;
+  userId: string;
+  role: ZoneMemberRole;
+  createdAt: string;
 }

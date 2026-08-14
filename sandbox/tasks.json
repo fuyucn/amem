@@ -161,7 +161,8 @@
         "zone_members 表",
         "addColumnIfMissing units.zone_id",
         "seedDefaultZones(db)（确定性 id + 回填）"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T2",
@@ -269,7 +270,8 @@
         "Storage.moveUnitZone",
         "createUnit INSERT 含 zone_id",
         "rowToUnit/unitToRow 映射 zoneId"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T3",
@@ -350,7 +352,8 @@
         "T2"
       ],
       "estimated_loc": 260,
-      "suggested_skills": []
+      "suggested_skills": [],
+      "status": "done"
     },
     {
       "id": "T4",
@@ -456,7 +459,8 @@
       "estimated_loc": 320,
       "suggested_skills": [
         "swe-loop"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T5",
@@ -550,7 +554,8 @@
       "estimated_loc": 260,
       "suggested_skills": [
         "optimize-loop"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T6",
@@ -633,7 +638,8 @@
         "T4"
       ],
       "estimated_loc": 260,
-      "suggested_skills": []
+      "suggested_skills": [],
+      "status": "done"
     },
     {
       "id": "T7",
@@ -715,7 +721,8 @@
         "T6"
       ],
       "estimated_loc": 220,
-      "suggested_skills": []
+      "suggested_skills": [],
+      "status": "done"
     },
     {
       "id": "T8",
@@ -812,7 +819,8 @@
       "estimated_loc": 320,
       "suggested_skills": [
         "swe-loop"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T9",
@@ -900,7 +908,8 @@
       "estimated_loc": 380,
       "suggested_skills": [
         "design-taste-frontend"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T10",
@@ -981,7 +990,9 @@
       "estimated_loc": 260,
       "suggested_skills": [
         "design-taste-frontend"
-      ]
+      ],
+      "status": "done",
+      "completed_at": "2026-08-13"
     },
     {
       "id": "T11",
@@ -1036,7 +1047,9 @@
         "T9"
       ],
       "estimated_loc": 180,
-      "suggested_skills": []
+      "suggested_skills": [],
+      "status": "done",
+      "completed_at": "2026-08-13"
     },
     {
       "id": "T12",
@@ -1129,7 +1142,8 @@
         "T11"
       ],
       "estimated_loc": 150,
-      "suggested_skills": []
+      "suggested_skills": [],
+      "status": "done"
     }
   ],
   "order": [

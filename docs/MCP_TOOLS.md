@@ -8,14 +8,14 @@ Transports: **stdio** (default, for local agents) and **Streamable HTTP** (for r
 
 | Tool | Input | Output | Purpose |
 |------|-------|--------|---------|
-| `ingest` | `{ title, content, contentType?, sourceUri?, sessionId?, extract?, autoLink?, autoReview? }` | `IngestResult` | Save a trace + distill atomic units (with dedup). |
-| `recall` | `{ query, tokenBudget?, topK?, includeBody? }` | `RecallResult` | Assemble a compact, cited context block for prompt injection. |
-| `recall_layered` | `{ query, tokenBudget?, topK?, includeBody? }` | `LayeredRecallResult` | L0-L3 layered recall: persona + scenario blocks first, then precise units, budget-gated (less context, more signal). |
-| `search` | `{ query, limit?, offset? }` | `SearchResult` (includes `total`) | Hybrid keyword+semantic search; paginate with `limit`/`offset`. |
-| `save_unit` | `{ unit: NewUnit }` | `Unit` | Manually write a knowledge unit (procedures, plans, facts). |
+| `ingest` | `{ title, content, contentType?, sourceUri?, sessionId?, extract?, autoLink?, autoReview?, zone? }` | `IngestResult` | Save a trace + distill atomic units (with dedup). `zone` (id/slug) partitions the extracted units. |
+| `recall` | `{ query, tokenBudget?, topK?, includeBody?, zone?, crossZone? }` | `RecallResult` | Assemble a compact, cited context block for prompt injection. `zone` pins one partition; `crossZone` skips auto-routing and searches every accessible zone. |
+| `recall_layered` | `{ query, tokenBudget?, topK?, includeBody?, zone?, crossZone? }` | `LayeredRecallResult` | L0-L3 layered recall: persona + scenario blocks first, then precise units, budget-gated (less context, more signal). |
+| `search` | `{ query, limit?, offset?, zone?, crossZone? }` | `SearchResult` (includes `total`) | Hybrid keyword+semantic search; paginate with `limit`/`offset`; `zone` restricts to one partition. |
+| `save_unit` | `{ unit: NewUnit }` | `Unit` | Manually write a knowledge unit (procedures, plans, facts). Set `unit.zoneId` (id/slug) to partition it. |
 | `get_unit` | `{ id }` | `Unit` | Read a single unit. |
 | `update_unit` | `{ id, patch, reason? }` | `Unit` | Edit a unit (records a version). |
-| `list_units` | `{ type?, status?, tag?, limit? }` | `UnitSummary[]` | Browse units. |
+| `list_units` | `{ type?, status?, tag?, zone?, limit? }` | `UnitSummary[]` | Browse units, optionally filtered by zone (id/slug). |
 | `link_units` | `{ sourceUnitId, targetUnitId, relation, reason? }` | `Link` | Manually cross-reference two units. |
 | `prune_links` | `{ maxPerUnit?, dryRun? }` | `{ examined, kept, deleted }` | Trim auto links so every unit stays ≤ `maxPerUnit` degree (default 8); `dryRun: true` previews without deleting. |
 | `get_graph` | `{ includeClusters? }` | `Graph` | Fetch nodes + edges (for graph-aware reasoning) |
@@ -58,3 +58,27 @@ Transports: **stdio** (default, for local agents) and **Streamable HTTP** (for r
 > `recall_layered "active project"` to warm context; at the end of a session
 > call `ingest` with the transcript and `refresh_layers` to consolidate into
 > L2/L3. Amem keeps the knowledge base snowballing between tools.
+
+## Zone scoping
+
+Amem partitions knowledge into **zones** under a workspace (`personal` /
+`shared` / `project` / `inbox`). See `docs/ZONES.md` for the full model.
+
+- **Per-call**: pass `zone` (id or slug) to `ingest`, `save_unit`,
+  `list_units`, `recall`, `recall_layered`, `search`; pass `crossZone: true`
+  to `recall`/`recall_layered`/`search` to search every accessible zone.
+- **Session-wide (stdio)**: set `AMEM_WORKSPACE` (default `personal`) and
+  `AMEM_ZONE` (zone id/slug) when launching the MCP server. With `AMEM_ZONE`
+  set, **every** tool is scoped to that zone — reads are filtered at the
+  storage layer (no per-tool params needed for `get_graph`,
+  `working_memory`, `get_unit`, `list_scenarios`, `stats`, `activity`,
+  `curate`, …) and new writes without an explicit `zone` land in it.
+  A misconfigured `AMEM_ZONE` fails at startup instead of silently widening
+  access.
+- **Over HTTP**: the server honors `x-amem-zone` per request; an
+  inaccessible/unknown zone is rejected with `403`.
+
+Example (project-scoped agent):
+```sh
+AMEM_WORKSPACE=acme AMEM_ZONE=backend node packages/mcp/dist/cli.js
+```

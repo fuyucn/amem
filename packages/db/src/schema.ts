@@ -5,7 +5,7 @@ import type { Database as SqliteDatabase } from 'better-sqlite3';
  * Current schema version. Bump this when appending a new migration so that
  * `migrate` upgrades existing databases in place.
  */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 17;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS w_meta (
@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS units (
   embedding    TEXT,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
+  created_by_user_id TEXT,
   valid_from   TEXT,
   valid_to     TEXT,
   source_count INTEGER NOT NULL DEFAULT 0,
@@ -396,6 +397,51 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_stages_card ON pipeline_stages(card_id, 
 CREATE INDEX IF NOT EXISTS idx_pipeline_stages_created ON pipeline_stages(workspace_id, created_at DESC);
 `;
 
+/** Migration 14: zones (project partitions inside a workspace) + zone ACL members. */
+const ZONES_SQL = `
+CREATE TABLE IF NOT EXISTS zones (
+  id                 TEXT PRIMARY KEY,
+  workspace_id       TEXT NOT NULL,
+  slug               TEXT NOT NULL,
+  name               TEXT NOT NULL,
+  kind               TEXT NOT NULL CHECK(kind IN ('personal','shared','project','inbox')),
+  owner_user_id      TEXT,
+  visibility         TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private','workspace','members')),
+  description        TEXT,
+  embedding_centroid TEXT,
+  auto               INTEGER NOT NULL DEFAULT 0,
+  status             TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL,
+  UNIQUE(workspace_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_zones_workspace ON zones(workspace_id, status);
+
+CREATE TABLE IF NOT EXISTS zone_members (
+  zone_id    TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  role       TEXT NOT NULL CHECK(role IN ('owner','editor','reader')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (zone_id, user_id),
+  FOREIGN KEY (zone_id) REFERENCES zones(id)
+);
+CREATE INDEX IF NOT EXISTS idx_zone_members_user ON zone_members(user_id);
+`;
+
+const UNITS_CREATED_BY_SQL = `-- migration 15: units.created_by_user_id (applied via addColumnIfMissing in migrate()).`;
+
+/** Singleton OCR endpoint configured from Settings (migration 17). */
+const OCR_SETTINGS_SQL = `
+CREATE TABLE IF NOT EXISTS ocr_settings (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  base_url   TEXT NOT NULL,
+  model      TEXT NOT NULL,
+  api_key    TEXT NOT NULL DEFAULT '',
+  min_chars  INTEGER NOT NULL DEFAULT 60,
+  updated_at TEXT NOT NULL
+);
+`;
+
 const MIGRATIONS: string[] = [
   SCHEMA_SQL,
   EVENTS_SQL,
@@ -411,6 +457,9 @@ const MIGRATIONS: string[] = [
   '-- migration 11 (scene heat) is applied imperatively below for idempotency',
   QUERY_INDEXES_SQL,
   PIPELINE_STAGES_SQL,
+  ZONES_SQL,
+  UNITS_CREATED_BY_SQL,
+  OCR_SETTINGS_SQL,
 ];
 
 /**
@@ -479,6 +528,13 @@ export function migrate(db: SqliteDatabase): void {
     if (i === 11) {
       addColumnIfMissing(db, 'scenarios', 'heat', 'INTEGER NOT NULL DEFAULT 0');
       addColumnIfMissing(db, 'scenarios', 'last_hit_at', 'TEXT');
+    }
+    if (i === 14) {
+      addColumnIfMissing(db, 'units', 'zone_id', "TEXT NOT NULL DEFAULT 'z_inbox'");
+      db.exec('CREATE INDEX IF NOT EXISTS idx_units_zone ON units(workspace_id, zone_id)');
+    }
+    if (i === 15) {
+      addColumnIfMissing(db, 'units', 'created_by_user_id', 'TEXT');
     }
     db.pragma(`user_version = ${i + 1}`);
   }

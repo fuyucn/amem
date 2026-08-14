@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from 'react-force-graph-2d';
 import { api } from '../api';
 import { PageHead } from '../components/PageHead';
-import type { Graph, Scenario, Unit } from '../types';
+import type { Graph, Scenario, Unit, Zone } from '../types';
 
 // Single-hue family: emerald/teal for signal, cool slate for neutrals.
 const TYPE_COLORS: Record<string, string> = {
@@ -24,6 +24,11 @@ const CLUSTER_TINTS = [
   '#34d399', '#2dd4bf', '#6ee7b7', '#4ade80', '#5eead4',
   '#86efac', '#67e8f9', '#8fa8a4', '#94a3b8', '#a8b5c4',
 ];
+const ZONE_TINTS = [
+  '#34d399', '#2dd4bf', '#4ade80', '#5eead4', '#86efac', '#67e8f9',
+  '#60a5fa', '#818cf8', '#a78bfa', '#f472b6', '#fb923c', '#facc15',
+  '#22d3ee', '#a3e635', '#94a3b8',
+];
 
 function hashStr(s: string): number {
   let h = 2166136261;
@@ -44,6 +49,7 @@ interface GraphNodeData {
   form: string;
   status: string;
   category?: string;
+  zoneId?: string;
   community?: string;
   communityLabel?: string;
   isScenario?: boolean;
@@ -68,6 +74,17 @@ function heatColor(heat: number): string {
 }
 
 type DrawNode = GraphNodeData & { x: number; y: number };
+
+const SCENES_GROUP = '__scenes__';
+const NO_ZONE_GROUP = '__no_zone__';
+
+function groupKeyOf(n: { isScenario?: boolean; zoneId?: string; community?: string }, mode: 'zone' | 'cluster'): string {
+  if (mode === 'zone') {
+    if (n.isScenario) return SCENES_GROUP;
+    return n.zoneId ?? NO_ZONE_GROUP;
+  }
+  return n.community ?? NO_ZONE_GROUP;
+}
 
 // Zoom-level label policy. Far out only cluster anchors are named; zooming in
 // first reveals important nodes (scenarios, hubs, hot memories), then everything.
@@ -95,11 +112,14 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
 export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void }) {
   const graphRef = useRef<ForceGraphMethods<NodeObject<GraphNodeData>, LinkObject<GraphNodeData, GraphLinkData>> | undefined>(undefined);
   const [graph, setGraph] = useState<Graph | null>(null);
+  const [zones, setZones] = useState<Zone[]>([]);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Unit | Scenario | null>(null);
   const [zoomHint, setZoomHint] = useState(true);
   const [zoomK, setZoomK] = useState<number | null>(null);
+  const [groupMode, setGroupMode] = useState<'zone' | 'cluster'>('zone');
+  const [activeZone, setActiveZone] = useState<string | null>(null);
 
   const labelTier = (k: number): { name: string; count: number } => {
     const anchors = data.nodes.filter((n) => anchorIds.has(n.id));
@@ -111,25 +131,30 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
     return { name: '全部标题', count: data.nodes.length };
   };
 
-  const load = () => api.graph(true, true).then(setGraph).catch((e) => setError(String(e.message ?? e)));
+  const load = () => {
+    setError('');
+    return Promise.all([
+      api.graph(true, true).then(setGraph).catch((e) => setError(String(e.message ?? e))),
+      api.zones().then(setZones).catch(() => setZones([])),
+    ]);
+  };
   useEffect(() => { load(); }, []);
 
   const data = useMemo(() => {
     if (!graph) return { nodes: [], links: [] };
-    // Cluster-aware starting positions: place each community on its own arc so
-    // the force simulation separates groups instead of collapsing into a blob.
-    const clusterIndex = new Map((graph.clusters ?? []).map((c, i) => [c.id, i]));
+    // Partition-aware starting positions: place each zone (or community) on
+    // its own arc so the force simulation separates groups instead of
+    // collapsing into a blob. Zone mode is the default — users asked for
+    // visible partitions, not one undifferentiated cloud.
+    const groupKeys = [...new Set(graph.nodes.map((n) => groupKeyOf(n, groupMode)))].sort();
+    const groupIndex = new Map(groupKeys.map((k, i) => [k, i]));
     const groups = new Map<number, { angle: number; members: number }>();
-    const groupOf = (n: { id: string; community?: string }): number =>
-      n.community !== undefined && clusterIndex.has(n.community)
-        ? clusterIndex.get(n.community)!
-        : (graph.clusters?.length ?? 0) + Math.floor(hashStr(n.id) * 6);
-    const initial = (n: { id: string; community?: string }) => {
-      const g = groupOf(n);
+    const initial = (n: { id: string; isScenario?: boolean; zoneId?: string; community?: string }) => {
+      const g = groupIndex.get(groupKeyOf(n, groupMode)) ?? 0;
       const existing = groups.get(g) ?? { angle: hashStr(`g${g}`) * Math.PI * 2, members: 0 };
       existing.members += 1;
       groups.set(g, existing);
-      const ring = 170 + g * 95;
+      const ring = 170 + g * 110;
       const memberRadius = 50 + hashStr(`${n.id}:${g}`) * 110;
       const memberAngle = hashStr(`${n.id}:${g}`) * Math.PI * 2;
       return {
@@ -151,6 +176,7 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
           form: n.form,
           status: n.status,
           category: n.category,
+          zoneId: n.zoneId,
           community: n.community,
           communityLabel: n.communityLabel,
           isScenario: n.isScenario,
@@ -161,7 +187,7 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
       }),
       links: graph.links.map((l) => ({ source: l.sourceUnitId, target: l.targetUnitId, relation: l.relation })),
     };
-  }, [graph]);
+  }, [graph, groupMode]);
 
   // Tune the d3 force engine once nodes are mounted: a stronger charge and
   // longer link distance spread clusters apart instead of collapsing them.
@@ -183,6 +209,40 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
     return map;
   }, [graph]);
 
+  // Stable per-zone palette: order follows the API's zone list so the legend,
+  // node fills, and filter chips always agree; unknown ids fall back to a hash.
+  const zoneColor = useMemo(() => {
+    const map = new Map<string, string>();
+    const used = new Set(data.nodes.filter((n) => !n.isScenario && n.zoneId).map((n) => n.zoneId!));
+    const ordered = zones.filter((z) => used.has(z.id));
+    ordered.forEach((z, i) => map.set(z.id, ZONE_TINTS[i % ZONE_TINTS.length] ?? '#94a3b8'));
+    for (const id of used) {
+      if (!map.has(id)) map.set(id, ZONE_TINTS[(hashStr(id) * ZONE_TINTS.length) | 0] ?? '#94a3b8');
+    }
+    return map;
+  }, [zones, data.nodes]);
+
+  const zoneName = (zoneId?: string): string => {
+    if (!zoneId) return '未分区';
+    if (zoneId === SCENES_GROUP) return 'Scenes';
+    return zones.find((z) => z.id === zoneId)?.name ?? zoneId.replace(/^z_/, '');
+  };
+
+  // Click a zone chip to isolate it; only intra-zone links survive so the
+  // partition reads as a clean subgraph instead of a cross-linked tangle.
+  const visible = useMemo(() => {
+    if (!activeZone) return data;
+    const ids = new Set(
+      data.nodes
+        .filter((n) => groupKeyOf(n, groupMode) === activeZone)
+        .map((n) => n.id),
+    );
+    return {
+      nodes: data.nodes.filter((n) => ids.has(n.id)),
+      links: data.links.filter((l) => ids.has(String(l.source)) && ids.has(String(l.target))),
+    };
+  }, [data, activeZone, groupMode]);
+
   const linkStyle = (l: GraphLinkData) => {
     const major = l.relation !== 'related_to';
     const color = REL_COLORS[l.relation] ?? '#3a4050';
@@ -192,19 +252,19 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
     };
   };
 
-  // One anchor node per community (highest degree + heat), capped so far-out
-  // zoom stays readable even with dozens of clusters.
+  // One anchor node per partition (highest degree + heat), capped so far-out
+  // zoom stays readable even with dozens of zones/clusters.
   const anchorIds = useMemo(() => {
-    const byCommunity = new Map<string, GraphNodeData[]>();
+    const byGroup = new Map<string, GraphNodeData[]>();
     for (const n of data.nodes) {
-      const key = n.communityLabel ?? '';
+      const key = groupMode === 'zone' ? groupKeyOf(n, 'zone') : (n.communityLabel ?? '');
       if (!key) continue;
-      const arr = byCommunity.get(key) ?? [];
+      const arr = byGroup.get(key) ?? [];
       arr.push(n);
-      byCommunity.set(key, arr);
+      byGroup.set(key, arr);
     }
     const picked: GraphNodeData[] = [];
-    for (const arr of byCommunity.values()) {
+    for (const arr of byGroup.values()) {
       let best: GraphNodeData | null = null;
       let bestScore = -1;
       for (const n of arr) {
@@ -218,10 +278,13 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
     }
     picked.sort((a, b) => ((b.degree ?? 0) + (b.heat ?? 0)) - ((a.degree ?? 0) + (a.heat ?? 0)));
     return new Set(picked.slice(0, 14).map((n) => n.id));
-  }, [data.nodes]);
+  }, [data.nodes, groupMode]);
 
   const nodeFill = (n: GraphNodeData): string => {
     if (n.isScenario) return heatColor(n.heat ?? 0);
+    if (groupMode === 'zone') {
+      return zoneColor.get(n.zoneId ?? NO_ZONE_GROUP) ?? '#94a3b8';
+    }
     if (n.community) {
       const c = clusterColor.get(n.community);
       if (c) return c;
@@ -255,7 +318,7 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
     if (!showLabel) return;
 
     const label = zoom < ZOOM_IMPORTANT && isAnchor
-      ? truncate(n.communityLabel ?? n.name, 24)
+      ? truncate(groupMode === 'zone' ? zoneName(n.zoneId) : (n.communityLabel ?? n.name), 24)
       : n.name;
     const fontSize = (zoom < ZOOM_IMPORTANT && isAnchor ? 11.5 : 10) / globalScale;
     const pad = 4 / globalScale;
@@ -292,19 +355,20 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
     <div className="grid">
       <PageHead
         title="Knowledge graph"
-        sub="Communities are auto-detected and laid out in arcs. Zoom out for cluster anchors, zoom in for hot scenes, hubs, then all titles."
+        sub="Default view partitions memory by zone — each workspace partition sits on its own arc. Switch to cluster mode for auto-detected communities. Click a zone chip to isolate it."
       >
         <span className="legend-chip">
           <i style={{ background: '#34d399' }} />
           {data.nodes.filter((n) => n.isScenario).length} hot scenes
         </span>
-        {graph?.clusters?.length ? <span className="legend-chip">{graph.clusters.length} clusters</span> : null}
+        {groupMode === 'cluster' && graph?.clusters?.length ? <span className="legend-chip">{graph.clusters.length} clusters</span> : null}
+        {groupMode === 'zone' && <span className="legend-chip">{new Set(data.nodes.filter((n) => !n.isScenario && n.zoneId).map((n) => n.zoneId)).size} zones</span>}
         {zoomK !== null && data.nodes.length > 0 && (
           <span className="legend-chip">
             zoom {zoomK.toFixed(2)} · {labelTier(zoomK).name} · {labelTier(zoomK).count}/{data.nodes.length} labels
           </span>
         )}
-        <button className="btn" onClick={load}>Reload</button>
+        <button className="btn" onClick={() => { setActiveZone(null); load(); }}>Reload</button>
       </PageHead>
       <div className="panel">
         {error && <div className="muted">Error: {error}</div>}
@@ -326,10 +390,51 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
         {data.nodes.length > 0 && (
           <>
             <div className="toolbar" style={{ marginBottom: 10 }}>
-              {Object.entries(CATEGORY_COLORS).filter(([k]) => k !== 'default').map(([k, color]) => (
-                <span key={k} className="legend-chip"><i style={{ background: color }} />{k}</span>
-              ))}
-              <span className="muted" style={{ marginLeft: 'auto', fontSize: 11.5 }}>category · clusters / scenes override</span>
+              <button
+                className={groupMode === 'zone' ? 'btn primary' : 'btn'}
+                onClick={() => { setGroupMode('zone'); setActiveZone(null); }}
+              >
+                By zone
+              </button>
+              <button
+                className={groupMode === 'cluster' ? 'btn primary' : 'btn'}
+                onClick={() => { setGroupMode('cluster'); setActiveZone(null); }}
+              >
+                By cluster
+              </button>
+              {groupMode === 'zone' && (
+                <div className="zone-chips" style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6, marginLeft: 10 }}>
+                  {zones
+                    .filter((z) => data.nodes.some((n) => n.zoneId === z.id))
+                    .map((z) => (
+                      <button
+                        key={z.id}
+                        className={activeZone === z.id ? 'legend-chip chip-active' : 'legend-chip'}
+                        style={{ cursor: 'pointer', border: 'none', background: activeZone === z.id ? 'var(--panel2)' : 'transparent' }}
+                        onClick={() => setActiveZone((prev) => (prev === z.id ? null : z.id))}
+                        title={`${z.description ?? z.slug} — click to isolate`}
+                      >
+                        <i style={{ background: zoneColor.get(z.id) }} />
+                        {z.name}
+                        <span className="muted" style={{ marginLeft: 4, fontSize: 11 }}>
+                          {data.nodes.filter((n) => n.zoneId === z.id).length}
+                        </span>
+                      </button>
+                    ))}
+                  {activeZone && (
+                    <button className="btn" style={{ padding: '2px 8px' }} onClick={() => setActiveZone(null)}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+              )}
+              {groupMode === 'cluster' &&
+                Object.entries(CATEGORY_COLORS).filter(([k]) => k !== 'default').map(([k, color]) => (
+                  <span key={k} className="legend-chip"><i style={{ background: color }} />{k}</span>
+                ))}
+              <span className="muted" style={{ marginLeft: 'auto', fontSize: 11.5 }}>
+                {groupMode === 'zone' ? 'zone partitions · scenes override' : 'category · clusters / scenes override'}
+              </span>
             </div>
             {zoomHint && (
               <div className="muted" style={{ marginBottom: 8, fontSize: 12 }}>
@@ -340,7 +445,7 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
             <div style={{ position: 'relative', height: '70vh', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
               <ForceGraph2D
                 ref={graphRef}
-                graphData={data}
+                graphData={visible}
                 backgroundColor="rgba(0,0,0,0)"
                 nodeRelSize={4}
                 cooldownTicks={220}
@@ -351,6 +456,7 @@ export function GraphView({ onOpenUnit }: { onOpenUnit?: (id: string) => void })
                   [
                     `${n.fullTitle}\n${n.isScenario ? `scenario · heat ${n.heat ?? 0}` : `${n.type} · ${n.form} · ${n.status}`}`,
                     n.category ? `\ncategory: ${n.category}` : '',
+                    n.zoneId ? `\nzone: ${zoneName(n.zoneId)}` : '',
                     n.communityLabel ? `\ncluster: ${n.communityLabel}` : '',
                   ].join('')
                 }

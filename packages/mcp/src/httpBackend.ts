@@ -61,7 +61,7 @@ import type {
   WorkingMemory,
   Graph,
 } from '@amem/core';
-import { OfflineEmbedder } from '@amem/core';
+import { OfflineEmbedder, appVersion } from '@amem/core';
 import type { Embedder, LlmClient } from '@amem/core';
 
 export interface HttpBackendOpts {
@@ -348,7 +348,7 @@ export function createHttpAmemService(opts: HttpBackendOpts): AmemService {
     health(): { ok: boolean; version: string; embeddingMode: EmbeddingMode } {
       // health is sync on interface; expose last-known optimistic shape.
       // Callers that need live health use the async tool path which awaits callTool.
-      return { ok: true, version: '0.1.0-http', embeddingMode: 'offline' };
+      return { ok: true, version: appVersion, embeddingMode: 'offline' };
     },
     // The LLM lives server-side (Settings → AI Providers). The stdio proxy has
     // no direct model to swap; the server already hot-swaps on activate/update.

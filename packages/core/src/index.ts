@@ -97,6 +97,7 @@ export {
   type ClassifyOutcome,
 } from './classify.js';
 export { detectCommunities, countCommunities, type CommunityEdge } from './lib/communities.js';
+export { appVersion } from './lib/version.js';
 export { createService, type ServiceDeps } from './service.js';
 export * from './store.js';
 export * from './requestContext.js';

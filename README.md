@@ -64,7 +64,7 @@ Pre-built images are published to GHCR on every tag:
 
 ```sh
 docker run -d --name amem -p 8321:8321 -v "$(pwd)/data:/data" \
-  ghcr.io/fuyucn/amem:v0.1.0
+  ghcr.io/fuyucn/amem:v0.2.0
 ```
 
 Set `AMEM_EMBEDDING_BASE_URL` / `AMEM_LLM_BASE_URL` (+ model/key) in your env for semantic + LLM distillation. Works offline out of the box.

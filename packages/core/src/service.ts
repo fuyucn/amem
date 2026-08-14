@@ -89,6 +89,7 @@ import { buildWorkingMemory } from './workingMemory.js';
 import { routeAssets as routeAssetsFn } from './route.js';
 import { countTokens } from './lib/tokenizer.js';
 import { cosine, EMBED_BODY_HEAD, hashUnitEmbed } from './lib/vector.js';
+import { appVersion } from './lib/version.js';
 import { newId, nowIso, snapshotOf, toUnitSummary } from './lib/util.js';
 import { detectCommunities, countCommunities, type CommunityEdge } from './lib/communities.js';
 import { accessibleZones, getZoneAccess, resolveExplicitZone, resolveZoneForWrite, type ZoneAccess } from './zones.js';
@@ -1868,7 +1869,7 @@ export function createService(
       },
 
       health() {
-        return { ok: true, version: '0.1.0', embeddingMode: embed.mode };
+        return { ok: true, version: appVersion, embeddingMode: embed.mode };
       },
 
       setLlm(next: LlmClient) {

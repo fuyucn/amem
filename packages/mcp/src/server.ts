@@ -1,4 +1,5 @@
 import type { AmemConfig, AmemService, Storage, RequestContext } from '@amem/core';
+import { appVersion } from '@amem/core';
 import {
   createService,
   getRequestContext,
@@ -217,7 +218,7 @@ export async function createMcpServer(
 
   const server = new McpServer({
     name: 'amem',
-    version: '0.1.0',
+    version: appVersion,
   });
 
   for (const name of TOOL_NAMES) {

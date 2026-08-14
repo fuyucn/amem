@@ -5,7 +5,7 @@ import type { Database as SqliteDatabase } from 'better-sqlite3';
  * Current schema version. Bump this when appending a new migration so that
  * `migrate` upgrades existing databases in place.
  */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS w_meta (
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS units (
   status       TEXT NOT NULL,
   quality      REAL NOT NULL DEFAULT 0,
   confidence   REAL NOT NULL DEFAULT 0,
+  agent        TEXT,
   embedding    TEXT,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
@@ -460,6 +461,7 @@ const MIGRATIONS: string[] = [
   ZONES_SQL,
   UNITS_CREATED_BY_SQL,
   OCR_SETTINGS_SQL,
+  '-- migration 18 (units.agent) is applied imperatively below for idempotency',
 ];
 
 /**
@@ -535,6 +537,25 @@ export function migrate(db: SqliteDatabase): void {
     }
     if (i === 15) {
       addColumnIfMissing(db, 'units', 'created_by_user_id', 'TEXT');
+    }
+    if (i === 17) {
+      addColumnIfMissing(db, 'units', 'agent', 'TEXT');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_units_agent ON units(workspace_id, agent)');
+      // Backfill: units distilled from a session trace inherit the session's
+      // agent (source uri is session://<sessionId>).
+      db.exec(`
+        UPDATE units
+        SET agent = (
+          SELECT s.agent FROM unit_sources us
+          JOIN sources sr ON sr.id = us.source_id
+          JOIN sessions s ON s.id = substr(sr.uri, 11)
+          WHERE us.unit_id = units.id
+            AND sr.uri LIKE 'session://%'
+            AND s.agent IS NOT NULL
+          LIMIT 1
+        )
+        WHERE agent IS NULL
+      `);
     }
     db.pragma(`user_version = ${i + 1}`);
   }

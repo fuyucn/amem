@@ -165,6 +165,8 @@ export interface Unit {
   updatedAt: IsoDate;
   /** User who wrote this unit (provenance; set from the request context). */
   createdByUserId?: string;
+  /** Agent identity that wrote this unit (PAT name / explicit param). */
+  agent?: string;
   /** Workspace this unit belongs to (storage-level isolation). */
   workspaceId?: string;
   /** bi-temporal: valid window (optional). */
@@ -454,6 +456,8 @@ export interface IngestInput {
   contentType?: string;
   sourceUri?: string;
   sourceKind?: SourceKind;
+  /** Agent identity stamping every distilled unit (e.g. "codex"). */
+  agent?: string;
   /** Partition the extracted units into a specific zone (auto-assigned when absent). */
   zoneId?: string;
   /** run distillation to extract units. Default true. */
@@ -626,6 +630,8 @@ export interface UnitSummary {
   zoneName?: string;
   /** User who wrote this unit (provenance). */
   createdByUserId?: string;
+  /** Agent identity that wrote this unit (PAT name / explicit param). */
+  agent?: string;
   /** Workspace this unit belongs to. */
   workspaceId?: string;
   /** Auto/manual classification stored on labels.category. */
@@ -1035,7 +1041,7 @@ export interface AmemService {
   updateUnit(id: UnitId, patch: Partial<NewUnit>, reason?: string): Promise<Unit>;
   deleteUnit(id: UnitId, reason?: string): Promise<void>;
   reviewUnit(id: UnitId, action: 'accept' | 'discard'): Promise<Unit | null>;
-  listUnits(filter?: { type?: UnitType; status?: UnitStatus; tag?: string; category?: string; zoneId?: string; limit?: number; offset?: number }): Promise<UnitSummary[]>;
+  listUnits(filter?: { type?: UnitType; status?: UnitStatus; tag?: string; agent?: string; category?: string; zoneId?: string; limit?: number; offset?: number }): Promise<UnitSummary[]>;
   /** Batch classify units by the category taxonomy (rules + optional LLM). */
   classifyUnits(opts?: { ids?: string[]; mode?: 'rules' | 'llm' | 'auto'; reclassify?: boolean }): Promise<import('./classify.js').ClassifyReport>;
   /** Batch manage units: archive / restore / delete / accept. */

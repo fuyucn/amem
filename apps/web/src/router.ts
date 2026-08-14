@@ -6,6 +6,7 @@ export type Tab =
   | 'graph'
   | 'search'
   | 'units'
+  | 'library'
   | 'traces'
   | 'scenarios'
   | 'assets'
@@ -27,6 +28,7 @@ const TAB_PATHS: Record<Tab, string> = {
   graph: '/graph',
   search: '/search',
   units: '/units',
+  library: '/library',
   traces: '/traces',
   scenarios: '/scenarios',
   assets: '/assets',

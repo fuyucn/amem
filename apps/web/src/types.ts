@@ -11,7 +11,7 @@ export interface Unit {
   id: string; type: UnitType; form: MemoryForm; title: string; summary: string; body: string;
   tags: string[]; labels: Record<string, string | number | boolean>; status: UnitStatus; quality: number; confidence: number;
   createdAt: string; updatedAt: string; sourceCount: number; importance: number; decay: number; version: number;
-  zoneId?: string; workspaceId?: string; createdByUserId?: string;
+  zoneId?: string; workspaceId?: string; createdByUserId?: string; agent?: string;
 }
 export interface UnitSummary {
   id: string; type: UnitType; form: MemoryForm; title: string; summary: string; tags: string[];
@@ -19,7 +19,19 @@ export interface UnitSummary {
   zoneId?: string;
   workspaceId?: string;
   createdByUserId?: string;
+  agent?: string;
   importance: number; decay: number; status: UnitStatus; updatedAt: string;
+}
+
+export interface LibraryTreeNode {
+  zoneId: string;
+  slug: string;
+  name: string;
+  kind: string;
+  visibility: string;
+  unitCount: number;
+  agents: Array<{ agent: string; count: number }>;
+  sources: Array<{ title: string; kind: string; count: number }>;
 }
 export interface UnitNode extends UnitSummary {
   quality: number;

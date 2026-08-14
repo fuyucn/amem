@@ -66,6 +66,32 @@ describe('@amem/mcp over InMemoryTransport', () => {
     expect(parsed.trace.title).toBe('Meeting notes');
   });
 
+  it('agent provenance: ingest stamps agent, list_units filters by it', async () => {
+    const ingest = await client.callTool({
+      name: 'ingest',
+      arguments: {
+        title: 'Agent-tagged ingest',
+        content:
+          'Decision: agent provenance flows through the MCP bridge. ' +
+          'Procedure: stamp agent on ingest and filter on list.',
+        agent: 'codex-mcp',
+      },
+    });
+    expect(ingest.isError).toBeFalsy();
+    const parsed = JSON.parse(ingest.content[0]?.type === 'text' ? ingest.content[0].text : '{}');
+    expect(parsed.units.length).toBeGreaterThanOrEqual(1);
+    for (const u of parsed.units) expect(u.agent).toBe('codex-mcp');
+
+    const filtered = await client.callTool({
+      name: 'list_units',
+      arguments: { agent: 'codex-mcp' },
+    });
+    expect(filtered.isError).toBeFalsy();
+    const listed = JSON.parse(filtered.content[0]?.type === 'text' ? filtered.content[0].text : '[]');
+    expect(listed.length).toBeGreaterThanOrEqual(1);
+    for (const u of listed) expect(u.agent).toBe('codex-mcp');
+  });
+
   it('search returns a success result', async () => {
     const result = await client.callTool({
       name: 'search',

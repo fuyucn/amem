@@ -152,7 +152,7 @@ export const api = {
   getWorkspace: () => getWorkspaceSlug(),
   hasToken: () => Boolean(getToken()),
 
-  ingest: (body: { title: string; content: string; contentType?: string; sourceUri?: string; sessionId?: string; autoReview?: boolean }) =>
+  ingest: (body: { title: string; content: string; contentType?: string; sourceUri?: string; sessionId?: string; agent?: string; autoReview?: boolean }) =>
     request<IngestResult>('/ingest', { method: 'POST', body: JSON.stringify(body) }),
   recall: (body: { query: string; tokenBudget?: number; topK?: number; zone?: string }) =>
     request<RecallResult>('/recall', { method: 'POST', body: JSON.stringify(body) }),
@@ -181,8 +181,10 @@ export const api = {
     request<ActivitySummary>(`/activity/summary${qs(f)}`),
   graph: (clusters = true, scenarios = true) =>
     request<Graph>(`/graph${qs({ clusters: clusters ? 1 : 0, scenarios: scenarios ? 1 : 0 })}`),
-  units: (f: { type?: string; status?: string; tag?: string; category?: string; limit?: number; zone?: string } = {}) =>
+  units: (f: { type?: string; status?: string; tag?: string; agent?: string; category?: string; limit?: number; zone?: string } = {}) =>
     request<UnitSummary[]>(`/units${qs(f)}`),
+  libraryTree: () => request<import('./types').LibraryTreeNode[]>('/library/tree'),
+  agents: () => request<Array<{ agent: string; count: number }>>('/agents'),
   unit: (id: string) => request<Unit>(`/units/${id}`),
   versions: (id: string) => request<Version[]>(`/units/${id}/versions`),
   linksForUnit: (id: string) => request<Link[]>(`/links/${id}`),

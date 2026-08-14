@@ -6,6 +6,7 @@ import { Dashboard } from './views/Dashboard';
 import { GraphView } from './views/GraphView';
 import { Search } from './views/Search';
 import { Units } from './views/Units';
+import { Library } from './views/Library';
 import { Traces } from './views/Traces';
 import { Scenarios } from './views/Scenarios';
 import { Assets } from './views/Assets';
@@ -25,6 +26,7 @@ const TABS: Array<{ id: Tab; label: string; path: string }> = [
   { id: 'graph', label: 'Graph', path: '/graph' },
   { id: 'search', label: 'Search', path: '/search' },
   { id: 'units', label: 'Units', path: '/units' },
+  { id: 'library', label: 'Library', path: '/library' },
   { id: 'traces', label: 'Ingest', path: '/traces' },
   { id: 'scenarios', label: 'Scenarios', path: '/scenarios' },
   { id: 'assets', label: 'Assets', path: '/assets' },
@@ -49,6 +51,7 @@ const NAV_SECTIONS: Array<{ label: string; tabs: Array<{ id: Tab; label: string;
       { id: 'graph', label: 'Graph', hint: 'Knowledge graph' },
       { id: 'search', label: 'Search', hint: 'Keyword + recall' },
       { id: 'units', label: 'Units', hint: 'Atomic memories' },
+      { id: 'library', label: 'Library', hint: 'Zone · agent tree' },
       { id: 'working-memory', label: 'Working Memory', hint: 'Session context' },
       { id: 'review', label: 'Review', hint: 'Pending units' },
     ],
@@ -78,6 +81,7 @@ const TAB_TITLES: Record<Tab, string> = {
   graph: 'Graph',
   search: 'Search',
   units: 'Units',
+  library: 'Library',
   traces: 'Ingest',
   scenarios: 'Scenarios',
   assets: 'Assets',
@@ -98,6 +102,7 @@ export function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [zones, setZones] = useState<Zone[]>([]);
   const [activeZone, setActiveZone] = useState('');
+  const [agentFilter, setAgentFilter] = useState('');
 
   const searchQFromUrl = () => new URLSearchParams(window.location.search).get('q') || '';
 
@@ -178,6 +183,7 @@ export function App() {
       .then((zs) => {
         setZones(zs);
         setActiveZone((cur) => (cur && zs.some((z) => z.id === cur) ? cur : ''));
+        setAgentFilter('');
       })
       .catch(() => setZones([]));
   }, [ws]);
@@ -209,6 +215,12 @@ export function App() {
     const path = tabPath('search') + (query ? `?q=${encodeURIComponent(query)}` : '');
     if (window.location.pathname !== path) window.history.pushState(null, '', path);
     setRoute({ tab: 'search' });
+  };
+
+  const openLibrary = (zoneId: string, agent: string) => {
+    setActiveZone(zoneId);
+    setAgentFilter(agent);
+    go('units');
   };
 
   const needsLogin = !!me && me.authEnabled && !me.user;
@@ -304,8 +316,11 @@ export function App() {
               zones={zones}
               zone={activeZone}
               onZoneChange={setActiveZone}
+              agent={agentFilter}
+              onAgentChange={setAgentFilter}
             />
           )}
+          {tab === 'library' && <Library onNavigate={openLibrary} />}
           {tab === 'traces' && <Traces />}
           {tab === 'scenarios' && <Scenarios />}
           {tab === 'assets' && <Assets />}

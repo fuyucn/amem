@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Asset, Link, Source, Storage, Unit } from '@amem/core';
 import { runWithRequestContextAsync } from '@amem/core';
-import { createSqliteStorageFromPath } from '../src/index.js';
+import { createSqliteStorageFromPath, openDatabase } from '../src/index.js';
 
 const dirs: string[] = [];
 function tmpDb(name: string): string {
@@ -40,6 +40,34 @@ describe('SqliteStorage', () => {
     });
   });
 
+  it('migrates v17 → v18: adds units.agent and backfills from session provenance', async () => {
+    const path = tmpDb('v17.db');
+    const storage = await createSqliteStorageFromPath(path);
+    await storage.upsertSession({ id: 'sess_a', label: 'Codex session', agent: 'codex' });
+    await storage.createUnit(unit({ id: 'u1' }));
+    await storage.upsertSource({
+      id: 'src1', title: 'session source', kind: 'session', uri: 'session://sess_a',
+      contentHash: 'h1', contentLength: 1, createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    await storage.addCitation({ unitId: 'u1', sourceId: 'src1', assertedAt: '2026-01-01T00:00:00.000Z' });
+    await storage.close();
+
+    // Simulate a v17 database: drop the agent column/index and roll back the version.
+    const db = openDatabase(path);
+    db.exec('DROP INDEX IF EXISTS idx_units_agent');
+    db.exec('ALTER TABLE units DROP COLUMN agent');
+    db.pragma('user_version = 17');
+    db.close();
+
+    // Reopening runs migration 18: column restored and backfilled from the session.
+    const s2 = await createSqliteStorageFromPath(path);
+    const u = await s2.getUnit('u1');
+    expect(u?.agent).toBe('codex');
+    const agents = await s2.listAgents();
+    expect(agents.find((a) => a.agent === 'codex')?.count).toBe(1);
+    await s2.close();
+  });
+
   it('unit CRUD and listUnits filters', async () => {
     const storage: Storage = await createSqliteStorageFromPath(tmpDb('crud.db'));
     await storage.createUnit(unit());
@@ -61,6 +89,32 @@ describe('SqliteStorage', () => {
     expect((await storage.getUnit('u1'))!.title).toBe('Renamed');
     await storage.deleteUnit('u2');
     expect((await storage.listUnits({})).length).toBe(1);
+    await storage.close();
+  });
+
+  it('agent provenance: filters, listAgents and libraryTree', async () => {
+    const storage: Storage = await createSqliteStorageFromPath(tmpDb('agent.db'));
+    const zoneId = 'z_shared_ws_personal';
+    await storage.createUnit(unit({ id: 'u1', agent: 'codex', zoneId }));
+    await storage.createUnit(unit({ id: 'u2', agent: 'codex', zoneId }));
+    await storage.createUnit(unit({ id: 'u3', agent: 'claude', zoneId }));
+    await storage.createUnit(unit({ id: 'u4', agent: 'codex', status: 'archived', zoneId }));
+
+    const codexUnits = await storage.listUnits({ agent: 'codex' });
+    // listUnits includes archived rows (status filter is opt-in); u4 is archived.
+    expect(codexUnits.map((u) => u.id).sort()).toEqual(['u1', 'u2', 'u4']);
+    expect(codexUnits.every((u) => u.agent === 'codex')).toBe(true);
+
+    const agents = await storage.listAgents();
+    expect(agents.find((a) => a.agent === 'codex')?.count).toBe(2);
+    expect(agents.find((a) => a.agent === 'claude')?.count).toBe(1);
+
+    const tree = await storage.libraryTree();
+    const zone = tree.find((z) => z.slug === 'shared');
+    expect(zone).toBeDefined();
+    expect(zone!.unitCount).toBe(3);
+    expect(zone!.agents.find((a) => a.agent === 'codex')?.count).toBe(2);
+    expect(zone!.agents.find((a) => a.agent === 'claude')?.count).toBe(1);
     await storage.close();
   });
 

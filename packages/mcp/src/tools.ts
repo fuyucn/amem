@@ -93,6 +93,8 @@ export const toolSchemas = {
     extract: z.boolean().optional(),
     autoLink: z.boolean().optional(),
     autoReview: z.boolean().optional(),
+    /** Agent identity stamping distilled units (overrides PAT-name default). */
+    agent: z.string().optional(),
     /** Zone id or slug to partition the distilled units into (auto-assigned when absent). */
     zone: z.string().optional(),
   }),
@@ -146,6 +148,7 @@ export const toolSchemas = {
     type: z.enum(UNIT_TYPES).optional(),
     status: z.enum(STATUSES).optional(),
     tag: z.string().optional(),
+    agent: z.string().optional(),
     limit: z.number().optional(),
     /** Zone id or slug to filter units by. */
     zone: z.string().optional(),
@@ -363,6 +366,7 @@ const executors: Record<ToolName, Executor> = {
       extract: optionalBool(a.extract),
       autoLink: optionalBool(a.autoLink),
       autoReview: optionalBool(a.autoReview),
+      agent: optionalStr(a.agent),
       zoneId: optionalStr(a.zone),
     });
   },
@@ -426,6 +430,7 @@ const executors: Record<ToolName, Executor> = {
       type: a.type === undefined ? undefined : (a.type as UnitType),
       status: a.status === undefined ? undefined : (a.status as UnitStatus),
       tag: optionalStr(a.tag),
+      agent: optionalStr(a.agent),
       limit: optionalNum(a.limit),
       zoneId: optionalStr(a.zone),
     });

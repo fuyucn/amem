@@ -18,10 +18,13 @@ interface UnitsProps {
   zones?: Zone[];
   zone?: string;
   onZoneChange?: (zoneId: string) => void;
+  agent?: string;
+  onAgentChange?: (agent: string) => void;
 }
 
-export function Units({ unitId = null, onSelectUnit, zones = [], zone = '', onZoneChange }: UnitsProps) {
+export function Units({ unitId = null, onSelectUnit, zones = [], zone = '', onZoneChange, agent = '', onAgentChange }: UnitsProps) {
   const [units, setUnits] = useState<UnitSummary[]>([]);
+  const [agents, setAgents] = useState<Array<{ agent: string; count: number }>>([]);
   const [selectedId, setSelectedId] = useState<string | null>(unitId);
   const [unit, setUnit] = useState<Unit | null>(null);
   const [linksIn, setLinksIn] = useState<Link[]>([]);
@@ -37,13 +40,19 @@ export function Units({ unitId = null, onSelectUnit, zones = [], zone = '', onZo
   const [form, setForm] = useState({ type: 'fact', title: '', summary: '', body: '', tags: '' });
 
   const load = () =>
-    api.units({ status, category: category === 'unclassified' ? '' : category, limit, zone: zone || undefined })
+    api.units({ status, category: category === 'unclassified' ? '' : category, agent: agent || undefined, limit, zone: zone || undefined })
       .then((list) => {
         setUnits(category === 'unclassified' ? list.filter((u) => !u.category) : list);
         setSelected(new Set());
       })
       .catch((e) => setError(String(e.message ?? e)));
-  useEffect(() => { load(); }, [status, category, limit, zone]);
+  useEffect(() => { load(); }, [status, category, limit, zone, agent]);
+
+  useEffect(() => {
+    api.agents()
+      .then(setAgents)
+      .catch(() => setAgents([]));
+  }, [zone]);
 
   useEffect(() => {
     setSelectedId(unitId);
@@ -166,6 +175,13 @@ export function Units({ unitId = null, onSelectUnit, zones = [], zone = '', onZo
             {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <ZoneFilter zones={zones} value={zone} onChange={onZoneChange ?? (() => undefined)} />
+          <label className="muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            agent:
+            <select value={agent} onChange={(e) => onAgentChange?.(e.target.value)}>
+              <option value="">all</option>
+              {agents.map((a) => <option key={a.agent} value={a.agent}>{a.agent} ({a.count})</option>)}
+            </select>
+          </label>
           <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setShowNew((v) => !v)}>+ New</button>
         </div>
         <div className="row" style={{ marginTop: 6 }}>
@@ -219,6 +235,7 @@ export function Units({ unitId = null, onSelectUnit, zones = [], zone = '', onZo
                   <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
                     {u.workspaceId ? `ws:${u.workspaceId.replace(/^ws_/, '')}` : ''}
                     {u.zoneId ? ` · zone:${zoneName(u.zoneId)}` : ''}
+                    {u.agent ? ` · agent:${u.agent}` : ''}
                     {u.createdByUserId ? ` · by:${u.createdByUserId.replace(/^user_/, '').slice(0, 8)}` : ''}
                   </div>
                 </div>
@@ -243,6 +260,7 @@ export function Units({ unitId = null, onSelectUnit, zones = [], zone = '', onZo
             <div className="row" style={{ marginTop: 4 }}>
               {unit.workspaceId && <span className="badge badge-zone">ws:{unit.workspaceId.replace(/^ws_/, '')}</span>}
               {unit.zoneId && <span className="badge badge-zone">zone:{zoneName(unit.zoneId)}</span>}
+              {unit.agent && <span className="badge badge-agent">agent:{unit.agent}</span>}
               {unit.createdByUserId && <span className="badge">by:{unit.createdByUserId.replace(/^user_/, '').slice(0, 8)}</span>}
             </div>
             <div className="row" style={{ marginTop: 6 }}>

@@ -35,6 +35,7 @@ export function toUnitSummary(unit: Unit): UnitSummary {
     zoneId: unit.zoneId,
     workspaceId: unit.workspaceId,
     createdByUserId: unit.createdByUserId,
+    agent: unit.agent,
     importance: unit.importance,
     decay: unit.decay,
     status: unit.status,

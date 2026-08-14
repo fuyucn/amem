@@ -368,6 +368,21 @@ li:focus-visible {
   margin-right: 4px;
   font-variant-numeric: tabular-nums;
 }
+.badge-zone {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #7dd3fc;
+}
+.badge-agent {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fcd34d;
+}
+.badge-cat {
+  background: rgba(167, 139, 250, 0.12);
+  border-color: rgba(167, 139, 250, 0.35);
+  color: #c4b5fd;
+}
 .tag {
   background: var(--accent-soft);
   color: #6ee7b7;

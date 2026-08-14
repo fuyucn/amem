@@ -7,3 +7,4 @@ iter	phase	verdict	score	blocking	major	change
 6	keep	-	294/294	-	yes	T13 login onboarding: /login wizard (account→workspace→PAT) — Login.tsx + App auth gate + router login tab + README; quality gate ok; eslint clean; headless-chrome DOM verified; e2e API login→me→workspaces→PAT→recall 200
 7	build	-	-	-	-	T14: bump GH Actions checkout@v7/setup-node@v7/pnpm@v6 + release.yml (GHCR image + archive on v* tag); 294 tests green; quality gate ok
 8	build	-	-	-	-	T14 complete: CI actions bumped, release workflow added, README/CHANGELOG updated, 294 tests green, quality gate ok
+9	build	-	-	-	-	T15 agent memory + Library tree: units.agent (schema v18 + v17→v18 backfill fix), /agents + /library/tree REST, MCP/REST agent filters, web Library tree view + Units agent filter; 298 tests green (4 new); builds clean; deployed on 8321; e2e: ingest agent=codex → /agents codex×3, /units?agent=codex×3, tree inbox codex×3

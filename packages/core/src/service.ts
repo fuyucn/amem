@@ -376,6 +376,7 @@ export function createService(
         embedding,
         createdAt: unit.createdAt ?? now,
         createdByUserId: unit.createdByUserId ?? requireRequestContext().userId,
+        agent: unit.agent ?? requireRequestContext().agent,
         validFrom: unit.validFrom,
         validTo: unit.validTo,
         sourceCount: unit.sourceCount ?? 0,
@@ -476,6 +477,7 @@ export function createService(
             importance: 0.5,
             decay: 1,
             zoneId: input.zoneId,
+            agent: input.agent,
           }, { zoneAccess });
           units.push(unit);
           if (source) {
@@ -835,6 +837,7 @@ export function createService(
         type?: Unit['type'];
         status?: Unit['status'];
         tag?: string;
+        agent?: string;
         category?: string;
         zoneId?: string;
         limit?: number;
@@ -845,6 +848,7 @@ export function createService(
         if (filter.type) list = list.filter((u) => u.type === filter.type);
         if (filter.status) list = list.filter((u) => u.status === filter.status);
         if (filter.tag) list = list.filter((u) => u.tags.includes(filter.tag!));
+        if (filter.agent) list = list.filter((u) => u.agent === filter.agent);
         if (filter.category) list = list.filter((u) => u.category === filter.category);
         if (filter.zoneId) {
           // Zone reference may be an id or a slug; normalize to the id so

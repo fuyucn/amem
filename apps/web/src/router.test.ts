@@ -16,6 +16,7 @@ describe('parsePath', () => {
       ['/graph', 'graph'],
       ['/search', 'search'],
       ['/units', 'units'],
+      ['/library', 'library'],
       ['/traces', 'traces'],
       ['/scenarios', 'scenarios'],
       ['/assets', 'assets'],

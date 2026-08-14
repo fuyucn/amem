@@ -99,7 +99,7 @@ const INSERT_UNIT = `
     importance, decay, version, labels, tags, zone_id
   ) VALUES (
     @id, @type, @form, @title, @summary, @body, @status, @quality, @confidence,
-    @embedding, @created_at, @updated_at, @created_by_user_id, @valid_from, @valid_to, @source_count,
+    @agent, @embedding, @created_at, @updated_at, @created_by_user_id, @valid_from, @valid_to, @source_count,
     @importance, @decay, @version, @labels, @tags, @zone_id
   )
 `;
@@ -108,7 +108,7 @@ const UPDATE_UNIT = `
   UPDATE units SET
     type = @type, form = @form, title = @title, summary = @summary,
     body = @body, status = @status, quality = @quality, confidence = @confidence,
-    embedding = @embedding, updated_at = @updated_at, valid_from = @valid_from,
+    agent = @agent, embedding = @embedding, updated_at = @updated_at, valid_from = @valid_from,
     valid_to = @valid_to, source_count = @source_count, importance = @importance,
     decay = @decay, version = @version, labels = @labels, tags = @tags, zone_id = @zone_id
   WHERE id = @id
@@ -157,6 +157,7 @@ interface UnitRow {
   created_at: string;
   updated_at: string;
   created_by_user_id: string | null;
+  agent: string | null;
   valid_from: string | null;
   valid_to: string | null;
   source_count: number;
@@ -191,7 +192,7 @@ interface ZoneMemberRow {
 }
 
 const LIGHT_UNIT_COLUMNS = `id, type, form, title, summary, body, status, quality, confidence,
-  created_at, updated_at, created_by_user_id, zone_id, valid_from, valid_to, source_count, importance, decay, version, labels, tags`;
+  created_at, updated_at, workspace_id, created_by_user_id, zone_id, agent, valid_from, valid_to, source_count, importance, decay, version, labels, tags`;
 
 /** Compact binary embedding: raw Float32 values. ~4x smaller and much faster to
  *  parse than the legacy JSON text format (no array allocation per number). */
@@ -356,6 +357,7 @@ function unitToRow(unit: Unit): UnitRow {
     status: unit.status,
     quality: unit.quality,
     confidence: unit.confidence,
+    agent: unit.agent ?? null,
     embedding: unit.embedding ? encodeEmbedding(unit.embedding) : null,
     created_at: unit.createdAt,
     updated_at: unit.updatedAt,
@@ -384,6 +386,7 @@ function rowToUnit(row: UnitRow): Unit {
     status: row.status,
     quality: row.quality,
     confidence: row.confidence,
+    agent: row.agent ?? undefined,
     embedding: row.embedding ? decodeEmbedding(row.embedding) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -411,6 +414,7 @@ function toSummary(unit: Unit): UnitSummary {
     tags: unit.tags,
     zoneId: unit.zoneId,
     createdByUserId: unit.createdByUserId,
+    agent: unit.agent,
     importance: unit.importance,
     decay: unit.decay,
     status: unit.status,
@@ -813,11 +817,11 @@ export class SqliteStorage implements Storage {
         .prepare(
           `INSERT INTO units (
             id, type, form, title, summary, body, status, quality, confidence,
-            embedding, created_at, updated_at, created_by_user_id, valid_from, valid_to, source_count,
+            agent, embedding, created_at, updated_at, created_by_user_id, valid_from, valid_to, source_count,
             importance, decay, version, labels, tags, workspace_id, zone_id
           ) VALUES (
             @id, @type, @form, @title, @summary, @body, @status, @quality, @confidence,
-            @embedding, @created_at, @updated_at, @created_by_user_id, @valid_from, @valid_to, @source_count,
+            @agent, @embedding, @created_at, @updated_at, @created_by_user_id, @valid_from, @valid_to, @source_count,
             @importance, @decay, @version, @labels, @tags, @workspace_id, @zone_id
           )`,
         )
@@ -872,6 +876,7 @@ export class SqliteStorage implements Storage {
     type?: UnitType;
     status?: Unit['status'];
     tag?: string;
+    agent?: string;
     limit?: number;
     offset?: number;
     includeBody?: boolean;
@@ -890,6 +895,10 @@ export class SqliteStorage implements Storage {
       conds.push("EXISTS (SELECT 1 FROM json_each(units.tags) WHERE json_each.value = @tag)");
       params.tag = filter.tag;
     }
+    if (filter.agent) {
+      conds.push('agent = @agent');
+      params.agent = filter.agent;
+    }
     const zoneSql = currentZoneSql(params);
     if (zoneSql) conds.push(zoneSql);
     conds.unshift('workspace_id = @workspace_id');
@@ -907,6 +916,73 @@ export class SqliteStorage implements Storage {
     }
     const rows = this.db.prepare(sql).all(params) as UnitRow[];
     return rows.map((r) => toSummary(rowToUnit(r)));
+  }
+
+  /** Agent breakdown per workspace (for filters / library tree). */
+  async listAgents(): Promise<Array<{ agent: string; count: number }>> {
+    const params: unknown[] = [currentWorkspaceId()];
+    let sql = `SELECT agent, COUNT(*) AS count FROM units
+      WHERE workspace_id = ? AND agent IS NOT NULL AND status != 'archived'`;
+    const zoneSql = currentZoneSqlPositional(params);
+    if (zoneSql) sql += ` AND ${zoneSql}`;
+    sql += ' GROUP BY agent ORDER BY count DESC, agent';
+    return this.db.prepare(sql).all(...params) as Array<{ agent: string; count: number }>;
+  }
+
+  /** Library browse tree: zones → agent/source breakdown with unit counts. */
+  async libraryTree(): Promise<
+    Array<{
+      zoneId: string;
+      slug: string;
+      name: string;
+      kind: Zone['kind'];
+      visibility: Zone['visibility'];
+      unitCount: number;
+      agents: Array<{ agent: string; count: number }>;
+      sources: Array<{ title: string; kind: string; count: number }>;
+    }>
+  > {
+    const ws = currentWorkspaceId();
+    const scoped = currentZoneIds();
+    const zones = (await this.listZones()).filter((z) => !scoped || scoped.includes(z.id));
+    const out: Awaited<ReturnType<Storage['libraryTree']>> = [];
+    for (const zone of zones) {
+      const zoneParams: unknown[] = [ws, zone.id];
+      const agents = this.db
+        .prepare(
+          `SELECT agent, COUNT(*) AS count FROM units
+           WHERE workspace_id = ? AND zone_id = ? AND agent IS NOT NULL AND status != 'archived'
+           GROUP BY agent ORDER BY count DESC, agent`,
+        )
+        .all(...zoneParams) as Array<{ agent: string; count: number }>;
+      const unitCountRow = this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM units
+           WHERE workspace_id = ? AND zone_id = ? AND status != 'archived'`,
+        )
+        .get(ws, zone.id) as { count: number };
+      const sources = this.db
+        .prepare(
+          `SELECT sr.title AS title, sr.kind AS kind, COUNT(*) AS count
+           FROM unit_sources us
+           JOIN units u ON u.id = us.unit_id
+           JOIN sources sr ON sr.id = us.source_id
+           WHERE u.workspace_id = ? AND u.zone_id = ? AND u.status != 'archived'
+           GROUP BY sr.id ORDER BY count DESC LIMIT 10`,
+        )
+        .all(...zoneParams) as Array<{ title: string; kind: string; count: number }>;
+      out.push({
+        zoneId: zone.id,
+        slug: zone.slug,
+        name: zone.name,
+        kind: zone.kind,
+        visibility: zone.visibility,
+        unitCount: unitCountRow.count,
+        agents,
+        sources,
+      });
+    }
+    return out;
   }
 
   /** All active (non-archived) units with their embeddings parsed. When a

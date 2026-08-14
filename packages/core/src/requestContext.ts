@@ -7,6 +7,8 @@ export interface RequestContext {
   workspaceId: string;
   workspaceSlug: string;
   userId?: string;
+  /** Agent identity (PAT name) that made this request. */
+  agent?: string;
   /** Zone partitions the caller may read/write; absent = legacy (no zone filter). */
   zoneIds?: string[];
   scopes: string[];

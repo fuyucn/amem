@@ -488,11 +488,14 @@ export async function createServer(
         type: req.query.type as NewUnit['type'],
         status: req.query.status as NewUnit['status'],
         tag: req.query.tag,
+        agent: req.query.agent,
         category: req.query.category,
         zoneId,
         limit: req.query.limit ? Number(req.query.limit) : undefined,
       });
     });
+    fastify.get('/library/tree', async () => storage.libraryTree());
+    fastify.get('/agents', async () => storage.listAgents());
     fastify.post<{ Body: { ids?: string[]; mode?: 'rules' | 'llm' | 'auto'; reclassify?: boolean } }>(
       '/units/classify',
       async (req) => service.classifyUnits(req.body ?? {}),

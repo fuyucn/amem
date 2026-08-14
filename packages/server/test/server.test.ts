@@ -135,6 +135,30 @@ describe('Amem REST API', () => {
     expect(missing.status).toBe(404);
   });
 
+  it('agent provenance: /units?agent=, /agents and /library/tree', async () => {
+    const ingest = await j('POST', '/api/v1/ingest', {
+      agent: 'codex-test',
+      title: 'Agent provenance',
+      content:
+        'Decision: every unit carries the agent that wrote it. ' +
+        'Procedure: tag units with their writing agent on ingest so the library tree can group by agent.',
+    });
+    expect(ingest.status).toBe(200);
+
+    const agents = (await j('GET', '/api/v1/agents')).body as Array<{ agent: string; count: number }>;
+    expect(agents.some((a) => a.agent === 'codex-test')).toBe(true);
+
+    const tree = (await j('GET', '/api/v1/library/tree')).body as Array<{
+      slug: string;
+      agents: Array<{ agent: string; count: number }>;
+    }>;
+    expect(tree.some((z) => z.agents.some((a) => a.agent === 'codex-test'))).toBe(true);
+
+    const filtered = (await j('GET', '/api/v1/units?agent=codex-test')).body as Array<{ agent?: string }>;
+    expect(filtered.length).toBeGreaterThanOrEqual(1);
+    expect(filtered.every((u) => u.agent === 'codex-test')).toBe(true);
+  });
+
   it('GET /export/okf returns a bundle', async () => {
     const { status, body } = await j('GET', '/api/v1/export/okf');
     expect(status).toBe(200);

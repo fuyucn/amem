@@ -44,6 +44,7 @@ export interface UnitFilter {
   type?: UnitType;
   status?: Unit['status'];
   tag?: string;
+  agent?: string;
   limit?: number;
   offset?: number;
   includeBody?: boolean;
@@ -56,6 +57,21 @@ export interface Storage {
   updateUnit(unit: Unit): Promise<void>;
   deleteUnit(id: UnitId): Promise<void>;
   listUnits(filter?: UnitFilter): Promise<UnitSummary[]>;
+  /** Agent breakdown per workspace (for filters / library tree). */
+  listAgents(): Promise<Array<{ agent: string; count: number }>>;
+  /** Library browse tree: zones → agent/source breakdown with unit counts. */
+  libraryTree(): Promise<
+    Array<{
+      zoneId: string;
+      slug: string;
+      name: string;
+      kind: Zone['kind'];
+      visibility: Zone['visibility'];
+      unitCount: number;
+      agents: Array<{ agent: string; count: number }>;
+      sources: Array<{ title: string; kind: string; count: number }>;
+    }>
+  >;
   /** All active units with embeddings (used by semantic search / recall).
    *  `limit` caps the row count (link generation only needs the freshest N). */
   allUnitsWithEmbeddings(limit?: number): Promise<Unit[]>;

@@ -29,6 +29,7 @@ import {
   renderOkfBundle,
   requireRequestContext,
   resolveExplicitZone,
+  runWithRequestContextAsync,
   type ProposeZonesOptions,
 } from '@amem/core';
 import {
@@ -2075,7 +2076,18 @@ export async function createServer(
         req.headers.accept = `${req.headers.accept}, application/json`;
       }
 
-      await session.transport.handleRequest(req.raw, reply.raw, parsed);
+      // Bind the request's own auth/zone context (resolved in onRequest) for
+      // the whole MCP dispatch. ALS `enterWith` is Node-version dependent and
+      // can leak a *previous* request's context into the tool handlers, so we
+      // use an explicit `run` scope instead of relying on the ambient store.
+      const requestCtx = (req as { amemAuth?: { ctx: RequestContext } }).amemAuth?.ctx;
+      if (requestCtx) {
+        await runWithRequestContextAsync(requestCtx, () =>
+          session.transport.handleRequest(req.raw, reply.raw, parsed),
+        );
+      } else {
+        await session.transport.handleRequest(req.raw, reply.raw, parsed);
+      }
     } catch (err) {
       if (!reply.raw.headersSent) {
         reply.raw.statusCode = 500;

@@ -1,7 +1,6 @@
 import type { AmemConfig, AmemService, Storage, RequestContext } from '@amem/core';
 import {
   createService,
-  enterRequestContext,
   getRequestContext,
   DEFAULT_WORKSPACE_ID,
   DEFAULT_WORKSPACE_SLUG,
@@ -215,8 +214,6 @@ export async function createMcpServer(
     closeStorage = opts?.closeStorage ?? ownsStorage;
     service = await createService(config, storage);
   }
-
-  enterRequestContext(authCtx);
 
   const server = new McpServer({
     name: 'amem',

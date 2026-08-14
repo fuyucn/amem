@@ -9,6 +9,7 @@ describe('parsePath', () => {
 
   it('maps every known tab path', () => {
     const paths: Array<[string, string]> = [
+      ['/login', 'login'],
       ['/dashboard', 'dashboard'],
       ['/activity', 'activity'],
       ['/zones', 'zones'],
@@ -52,6 +53,7 @@ describe('unitPath / tabPath', () => {
   it('exposes stable tab paths', () => {
     expect(tabPath('graph')).toBe('/graph');
     expect(tabPath('settings')).toBe('/settings');
+    expect(tabPath('login')).toBe('/login');
   });
 
   it('canonicalPath maps tab routes and unit routes', () => {

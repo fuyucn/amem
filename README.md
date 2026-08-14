@@ -60,6 +60,13 @@ docker compose -f docker/docker-compose.yml up --build -d
 # open http://localhost:8321
 ```
 
+Pre-built images are published to GHCR on every tag:
+
+```sh
+docker run -d --name amem -p 8321:8321 -v "$(pwd)/data:/data" \
+  ghcr.io/fuyucn/amem:v0.1.0
+```
+
 Set `AMEM_EMBEDDING_BASE_URL` / `AMEM_LLM_BASE_URL` (+ model/key) in your env for semantic + LLM distillation. Works offline out of the box.
 
 ### Setup wizard (detect → plan → apply → verify)

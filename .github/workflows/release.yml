@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Build web UI
+        run: pnpm --filter @amem/web build
+
+      - name: Smoke test
+        run: pnpm test
+
+      - name: Assemble release archive
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          ARCHIVE="amem-${TAG}.tar.gz"
+          STAGE="amem-${TAG}"
+          mkdir -p "${STAGE}/docker" "${STAGE}/docs" "${STAGE}/apps/web" "${STAGE}/packages"
+          cp docker/Dockerfile docker/docker-compose.yml "${STAGE}/docker/"
+          cp -R docs/. "${STAGE}/docs/"
+          cp README.md CHANGELOG.md LICENSE SECURITY.md "${STAGE}/"
+          cp -R apps/web/dist/. "${STAGE}/apps/web/dist/"
+          for pkg in server mcp db cli; do
+            if [ -d "packages/${pkg}/dist" ]; then
+              mkdir -p "${STAGE}/packages/${pkg}"
+              cp -R "packages/${pkg}/dist" "${STAGE}/packages/${pkg}/dist"
+            fi
+          done
+          tar -czf "${ARCHIVE}" "${STAGE}"
+          rm -rf "${STAGE}"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Publish Docker image to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMAGE="ghcr.io/${{ github.repository }}"
+          docker build -f docker/Dockerfile -t "${IMAGE}:${GITHUB_REF_NAME}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${GITHUB_REF_NAME}"
+          docker push "${IMAGE}:latest"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --title "Amem ${GITHUB_REF_NAME}" \
+            "./${archive}"

@@ -8,6 +8,9 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- CI: GitHub Actions upgraded to `checkout@v7` / `setup-node@v7` /
+  `pnpm/action-setup@v6`; new `release.yml` publishes a GHCR image and a
+  source archive to GitHub Releases on every `v*` tag.
 - Search pagination: `GET /api/v1/search` accepts `offset`, returns `total`;
   the Web UI shows "X more" and a **Load more** button (20/page).
 - `SECURITY.md`, `CODE_OF_CONDUCT.md`, GitHub issue/PR templates, CI badge.

@@ -5,3 +5,5 @@ iter	phase	verdict	score	blocking	major	change
 3	critique	pass	88	0	0	PE: 全部 blocking/major 已解决，仅剩 minor 措辞（已顺带修订）；覆盖完整、依赖图正确、可执行性高
 4	build	-	-	-	-	completed T10 (zone filters/badges/move: Units/Search/Dashboard + App shared activeZone) + T11 (POST /ingest/file + api.uploadFile + Review upload UI with drag-drop/zone/batch feedback); 294 tests green; eslint clean; docker rebuilt+deployed; smoke: upload md -> 3 units -> search hit
 5	build	-	-	-	-	T12 done + verify: zones API/seed ok, /zones route 200 in container, README zone doc, smoke passed, 294 tests green; amem-loop.mjs credential fallback (env->~/.amem/codex-pat.token->hook env); Stop hook hardened (hook.log + hook-last-attempt.json + token fallback, mock Stop ingested 4 units)
+6	build	-	-	-	-	T13 login onboarding delivered (PR #2 green); T14: bump GH Actions checkout@v7/setup-node@v7/pnpm@v6 + release.yml (GHCR image + archive on v* tag); 294 tests green; quality gate ok
+7	build	-	-	-	-	T14 complete: CI actions bumped, release workflow added, README/CHANGELOG updated, 294 tests green, quality gate ok

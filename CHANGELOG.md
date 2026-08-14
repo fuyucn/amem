@@ -6,6 +6,14 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-08-14
+
+### Changed
+
+- Release workflow publishes multi-arch Docker images (`linux/amd64` +
+  `linux/arm64`) to GHCR via Buildx, so Apple Silicon / ARM servers can pull
+  native images instead of emulated amd64.
+
 ## [0.2.0] — 2026-08-14
 
 ### Added

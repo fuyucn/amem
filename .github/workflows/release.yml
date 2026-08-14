@@ -54,15 +54,29 @@ jobs:
           rm -rf "${STAGE}"
           echo "archive=${ARCHIVE}" >> "$GITHUB_ENV"
 
-      - name: Publish Docker image to GHCR
-        env:
-          GHCR_TOKEN: ${{ github.token }}
-        run: |
-          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          IMAGE="ghcr.io/${{ github.repository }}"
-          docker build -f docker/Dockerfile -t "${IMAGE}:${GITHUB_REF_NAME}" -t "${IMAGE}:latest" .
-          docker push "${IMAGE}:${GITHUB_REF_NAME}"
-          docker push "${IMAGE}:latest"
+      - name: Set up QEMU (cross-arch build)
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME}
+            ghcr.io/${{ github.repository }}:latest
 
       - name: Create GitHub Release
         env:

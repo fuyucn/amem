@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from './api';
+import { api, type Me } from './api';
 import { GlobalSearch } from './components/GlobalSearch';
 import { Activity } from './views/Activity';
 import { Dashboard } from './views/Dashboard';
@@ -14,6 +14,7 @@ import { WorkingMemory } from './views/WorkingMemory';
 import { Review } from './views/Review';
 import { Settings } from './views/Settings';
 import { Zones } from './views/Zones';
+import { Login } from './views/Login';
 import { canonicalPath, DEFAULT_TAB, parsePath, tabPath, unitPath, type Route, type Tab } from './router';
 import type { Zone } from './types';
 
@@ -70,6 +71,7 @@ const NAV_SECTIONS: Array<{ label: string; tabs: Array<{ id: Tab; label: string;
 ];
 
 const TAB_TITLES: Record<Tab, string> = {
+  login: 'Login',
   dashboard: 'Overview',
   activity: 'Activity',
   zones: 'Zones',
@@ -89,6 +91,7 @@ export function App() {
   const [route, setRoute] = useState<Route>(() => parsePath(window.location.pathname));
   const tab = route.tab;
   const [ok, setOk] = useState<boolean | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
   const [pulse, setPulse] = useState(0);
   const [ws, setWs] = useState(api.getWorkspace());
   const [workspaces, setWorkspaces] = useState<Array<{ slug: string; name: string }>>([]);
@@ -139,16 +142,36 @@ export function App() {
     api
       .me()
       .then((m) => {
+        setMe(m);
         setWorkspaces(m.workspaces || []);
         setWs(m.workspace?.slug || api.getWorkspace());
       })
-      .catch(() => undefined);
+      .catch(() => {
+        // 401 / no valid token: if the server requires auth, gate on login.
+        setMe((cur) => cur ?? {
+          realm: 'local',
+          authEnabled: true,
+          user: null,
+          workspace: { id: '', slug: api.getWorkspace(), name: '' },
+          scopes: [],
+          workspaces: [],
+        });
+      });
   };
 
   useEffect(() => {
     api.health().then(() => setOk(true)).catch(() => setOk(false));
     refreshMeta();
   }, []);
+
+  useEffect(() => {
+    // Visiting /login while already authenticated → land on the dashboard.
+    if (tab === 'login' && me && (!me.authEnabled || me.user)) {
+      const path = tabPath('dashboard');
+      window.history.replaceState(null, '', path);
+      setRoute({ tab: 'dashboard' });
+    }
+  }, [tab, me]);
 
   useEffect(() => {
     api.zones()
@@ -187,6 +210,11 @@ export function App() {
     if (window.location.pathname !== path) window.history.pushState(null, '', path);
     setRoute({ tab: 'search' });
   };
+
+  const needsLogin = !!me && me.authEnabled && !me.user;
+  if (needsLogin) {
+    return <Login onAuthed={refreshMeta} />;
+  }
 
   return (
     <div className="layout">
